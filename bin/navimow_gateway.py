@@ -14,6 +14,9 @@ from pathlib import Path
 
 import aiohttp
 from mower_sdk.api import MowerAPI
+import aiomqtt
+from mower_sdk.sdk import NavimowSDK
+from mower_sdk.models import DeviceStateMessage
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
 _ap = argparse.ArgumentParser(add_help=False)
@@ -202,6 +205,68 @@ async def rest_init(
     return api, mqtt_info
 
 
+# ── Task 7: Navimow MQTT → LoxBerry MQTT ─────────────────────────────────────
+_state_queue: asyncio.Queue = asyncio.Queue()
+
+
+def _on_navimow_state(msg: "DeviceStateMessage") -> None:
+    """Synchronous callback from NavimowSDK — bridge to async queue."""
+    try:
+        _state_queue.put_nowait(msg)
+    except asyncio.QueueFull:
+        pass
+
+
+async def task_navimow_to_mqtt(
+    sdk: "NavimowSDK",
+    base_topic: str,
+    broker: dict,
+    shutdown: asyncio.Event,
+) -> None:
+    """Publish Navimow state updates to LoxBerry MQTT broker."""
+    mqtt_kwargs: dict = {
+        "hostname": broker["host"],
+        "port":     broker["port"],
+    }
+    if broker.get("username"):
+        mqtt_kwargs["username"] = broker["username"]
+    if broker.get("password"):
+        mqtt_kwargs["password"] = broker["password"]
+
+    while not shutdown.is_set():
+        try:
+            async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
+                LOGOK(f"Connected to LoxBerry MQTT {broker['host']}:{broker['port']}")
+                while not shutdown.is_set():
+                    try:
+                        msg = await asyncio.wait_for(
+                            _state_queue.get(), timeout=5.0
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+
+                    device_id = msg.device_id
+                    state_payload = json.dumps({
+                        "state":   msg.state,
+                        "battery": msg.battery,
+                        "error":   msg.error,
+                    })
+                    await lbmqtt.publish(
+                        f"{base_topic}/{device_id}/state", state_payload, retain=True
+                    )
+                    if msg.battery is not None:
+                        await lbmqtt.publish(
+                            f"{base_topic}/{device_id}/battery",
+                            str(msg.battery), retain=True
+                        )
+                    LOGDEB(f"Published state for {device_id}: {msg.state}")
+
+        except Exception as e:
+            if not shutdown.is_set():
+                LOGERR(f"LoxBerry MQTT error: {e} — reconnecting in 10s")
+                await asyncio.sleep(10)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 async def main() -> None:
     LOGSTART("Navimow Gateway starting")
@@ -229,8 +294,55 @@ async def main() -> None:
     async with aiohttp.ClientSession() as session:
         api, mqtt_info = await rest_init(plugin_cfg, session)
 
-        # Tasks 7–10 will be added here
+        navimow_sdk = None
+        if mqtt_info and plugin_cfg.get("access_token"):
+            from mower_sdk.models import Device as _Device
+            records = []
+            for d in plugin_cfg.get("devices", []):
+                # Create minimal Device-like objects for NavimowSDK records
+                class _Rec:
+                    def __init__(self, did, dname):
+                        self.id = did
+                        self.name = dname
+                        self.product_key = None
+                        self.device_name = dname
+                        self.iot_id = did
+                records.append(_Rec(d["device_id"], d["name"]))
+
+            navimow_sdk = NavimowSDK(
+                broker=mqtt_info.get("mqttHost", ""),
+                port=443,
+                username=mqtt_info.get("userName"),
+                password=mqtt_info.get("pwdInfo"),
+                ws_path=mqtt_info.get("mqttUrl"),
+                auth_headers={"Authorization": f"Bearer {plugin_cfg['access_token']}"},
+                records=records,
+            )
+            navimow_sdk.on_state(_on_navimow_state)
+            navimow_sdk.connect()
+            LOGINF("NavimowSDK connected to cloud MQTT")
+        else:
+            LOGWARN("NavimowSDK not started — missing token or MQTT info")
+
+        base_topic = plugin_cfg["base_topic"]
+        tasks = []
+
+        if navimow_sdk:
+            tasks.append(asyncio.create_task(
+                task_navimow_to_mqtt(navimow_sdk, base_topic, broker, _shutdown_event)
+            ))
+
+        # Tasks 8–10 will be added here
+
         await _shutdown_event.wait()
+
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        if navimow_sdk:
+            navimow_sdk.disconnect()
 
     LOGINF("Gateway stopped")
     remove_pid()
