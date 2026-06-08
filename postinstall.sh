@@ -4,8 +4,14 @@
 
 echo "Navimow: installing Python dependencies..."
 
-pip3 install --break-system-packages --quiet \
-    navimow-sdk \
+# Try without --break-system-packages first (pre-PEP-668 systems / pip < 23).
+# Fall back with the flag on Debian 12+ / Ubuntu 23+ where it is required.
+pip3 install --quiet \
+    "navimow-sdk>=0.1.2,<0.2" \
+    aiomqtt \
+    aiohttp 2>/dev/null \
+|| pip3 install --break-system-packages --quiet \
+    "navimow-sdk>=0.1.2,<0.2" \
     aiomqtt \
     aiohttp
 

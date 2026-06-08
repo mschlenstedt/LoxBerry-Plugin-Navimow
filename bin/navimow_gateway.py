@@ -340,6 +340,7 @@ async def task_token_refresh(
     plugin_cfg: dict,
     session: aiohttp.ClientSession,
     sdk: "NavimowSDK",
+    api: "MowerAPI",
     shutdown: asyncio.Event,
 ) -> None:
     """Refresh Navimow OAuth token 5 minutes before expiry."""
@@ -394,6 +395,8 @@ async def task_token_refresh(
                 sdk.update_mqtt_credentials(
                     auth_headers={"Authorization": f"Bearer {new_token}"}
                 )
+            if api:
+                api.set_token(new_token)
 
             LOGOK(f"Token refreshed — valid for {expires_in}s")
 
@@ -502,18 +505,18 @@ async def main() -> None:
 
         navimow_sdk = None
         if mqtt_info and plugin_cfg.get("access_token"):
-            from mower_sdk.models import Device as _Device
-            records = []
-            for d in plugin_cfg.get("devices", []):
-                # Create minimal Device-like objects for NavimowSDK records
-                class _Rec:
-                    def __init__(self, did, dname):
-                        self.id = did
-                        self.name = dname
-                        self.product_key = None
-                        self.device_name = dname
-                        self.iot_id = did
-                records.append(_Rec(d["device_id"], d["name"]))
+            class _DeviceRecord:
+                def __init__(self, did, dname):
+                    self.id = did
+                    self.name = dname
+                    self.product_key = None
+                    self.device_name = dname
+                    self.iot_id = did
+
+            records = [
+                _DeviceRecord(d["device_id"], d["name"])
+                for d in plugin_cfg.get("devices", [])
+            ]
 
             navimow_sdk = NavimowSDK(
                 broker=mqtt_info.get("mqttHost", ""),
@@ -544,7 +547,7 @@ async def main() -> None:
             ))
 
         tasks.append(asyncio.create_task(
-            task_token_refresh(plugin_cfg, session, navimow_sdk, _shutdown_event)
+            task_token_refresh(plugin_cfg, session, navimow_sdk, api, _shutdown_event)
         ))
 
         tasks.append(asyncio.create_task(

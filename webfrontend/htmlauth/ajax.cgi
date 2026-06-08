@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use CGI;
 use JSON;
+use POSIX qw(setsid);
 use LoxBerry::System;
 use LoxBerry::IO;
 
@@ -93,13 +94,30 @@ sub action_restart {
         return;
     }
 
-    system(
-        "python3 \"$gateway\" "
-        . "--logfile \"$logfile\" "
-        . "--logdbkey \"$logdbkey\" "
-        . "--configdir \"$lbpconfigdir\" "
-        . "--lbsconfig \"$lbsconf\" &"
-    );
+    # Double-fork to detach gateway from CGI process; use exec list form (no shell)
+    my $child = fork();
+    if (!defined $child) {
+        print encode_json({ ok => 0, error => "fork failed: $!" });
+        return;
+    }
+    if ($child == 0) {
+        my $gc = fork();
+        if (!defined $gc) { exit 1; }
+        if ($gc == 0) {
+            setsid();
+            open(STDIN,  '<', '/dev/null');
+            open(STDOUT, '>>', $logfile) or open(STDOUT, '>', '/dev/null');
+            open(STDERR, '>>', $logfile) or open(STDERR, '>', '/dev/null');
+            exec('python3', $gateway,
+                '--logfile',   $logfile,
+                '--logdbkey',  $logdbkey,
+                '--configdir', $lbpconfigdir,
+                '--lbsconfig', $lbsconf,
+            ) or exit 1;
+        }
+        exit 0;
+    }
+    waitpid($child, 0);
 
     my $new_pid;
     for (1..10) {
