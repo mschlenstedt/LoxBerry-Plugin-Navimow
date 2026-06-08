@@ -166,6 +166,9 @@ def _handle_sigterm(*_) -> None:
 API_BASE  = "https://navimow-fra.ninebot.com"
 TOKEN_URL = "https://navimow-fra.ninebot.com/openapi/oauth/getAccessToken"
 
+CLIENT_ID     = "homeassistant"
+CLIENT_SECRET = "57056e15-722e-42be-bbaa-b0cbfb208a52"
+
 
 # ── Task 6: REST Initialization ───────────────────────────────────────────────
 async def rest_init(
@@ -332,6 +335,72 @@ async def task_mqtt_to_navimow(
                 await asyncio.sleep(10)
 
 
+# ── Task 9: Token Refresh Watchdog ────────────────────────────────────────────
+async def task_token_refresh(
+    plugin_cfg: dict,
+    session: aiohttp.ClientSession,
+    sdk: "NavimowSDK",
+    shutdown: asyncio.Event,
+) -> None:
+    """Refresh Navimow OAuth token 5 minutes before expiry."""
+    while not shutdown.is_set():
+        await asyncio.sleep(60)
+        if shutdown.is_set():
+            break
+
+        expires_at = plugin_cfg.get("expires_at", 0)
+        time_left  = expires_at - time.time()
+
+        if time_left > 300:
+            LOGDEB(f"Token valid for {int(time_left)}s")
+            continue
+
+        LOGINF("Token expiring soon — refreshing")
+        refresh_token = plugin_cfg.get("refresh_token", "")
+        if not refresh_token:
+            LOGERR("No refresh_token available — cannot refresh")
+            continue
+
+        try:
+            async with session.post(
+                TOKEN_URL,
+                json={
+                    "grant_type":    "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id":     CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
+                },
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    LOGERR(f"Token refresh HTTP {resp.status}: {body[:200]}")
+                    continue
+                data = await resp.json()
+
+            new_token   = data.get("access_token", "")
+            new_refresh = data.get("refresh_token", refresh_token)
+            expires_in  = int(data.get("expires_in", 3600))
+
+            if not new_token:
+                LOGERR("Token refresh: empty access_token in response")
+                continue
+
+            plugin_cfg["access_token"]  = new_token
+            plugin_cfg["refresh_token"] = new_refresh
+            plugin_cfg["expires_at"]    = int(time.time()) + expires_in
+            save_plugin_config(plugin_cfg)
+
+            if sdk:
+                sdk.update_mqtt_credentials(
+                    auth_headers={"Authorization": f"Bearer {new_token}"}
+                )
+
+            LOGOK(f"Token refreshed — valid for {expires_in}s")
+
+        except Exception as e:
+            LOGERR(f"Token refresh error: {e}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 async def main() -> None:
     LOGSTART("Navimow Gateway starting")
@@ -402,7 +471,11 @@ async def main() -> None:
                 task_mqtt_to_navimow(navimow_sdk, base_topic, broker, _shutdown_event)
             ))
 
-        # Tasks 9–10 will be added here
+        tasks.append(asyncio.create_task(
+            task_token_refresh(plugin_cfg, session, navimow_sdk, _shutdown_event)
+        ))
+
+        # Task 10 will be added here
 
         await _shutdown_event.wait()
 
