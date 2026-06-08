@@ -1,8 +1,8 @@
 <div class="lb-card">
-  <div class="lb-card-header">MQTT Configuration</div>
+  <div class="lb-card-header"><?= $L['MQTT_HEADER'] ?></div>
   <div class="lb-card-body">
     <div class="lb-form-row">
-      <div class="lb-form-label">Base Topic</div>
+      <div class="lb-form-label"><?= $L['MQTT_LABEL_BASETOPIC'] ?></div>
       <div class="lb-form-field">
         <input type="text" id="base_topic" name="base_topic" class="lb-input"
                value="<?= htmlspecialchars($plugincfg['base_topic'] ?? 'navimow') ?>"
@@ -11,7 +11,7 @@
     </div>
     <div class="lb-form-row">
       <div class="lb-form-field">
-        <button id="btn_save_mqtt" class="lb-btn lb-btn-primary">Save</button>
+        <button id="btn_save_mqtt" class="lb-btn lb-btn-primary"><?= $L['MQTT_BTN_SAVE'] ?></button>
         <span id="save_result" style="margin-left:1rem; display:none;"></span>
       </div>
     </div>
@@ -19,7 +19,7 @@
 </div>
 
 <div class="lb-card" style="margin-top:1rem;">
-  <div class="lb-card-header">Topic Schema</div>
+  <div class="lb-card-header"><?= $L['MQTT_TOPIC_SCHEMA'] ?></div>
   <div class="lb-card-body">
     <p>MQTT broker connection settings are read from LoxBerry&rsquo;s <strong>general.json</strong>.</p>
     <table class="lb-table" style="font-family:monospace; font-size:0.9em;">

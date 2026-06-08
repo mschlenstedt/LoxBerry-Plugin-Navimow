@@ -45,10 +45,10 @@ $navbar[30]['active'] = ($tab === 'logs');
 LBWeb::lbheader("Navimow V$version", "https://github.com/mschlenstedt/LoxBerry-Plugin-Navimow", "", true);
 
 if ($oauth_ok) {
-    echo '<div class="lb-alert lb-alert-success">Authentication successful.</div>';
+    echo '<div class="lb-alert lb-alert-success">' . $L['OAUTH_SUCCESS'] . '</div>';
 }
 if ($oauth_error) {
-    echo '<div class="lb-alert lb-alert-danger">OAuth error: ' . $oauth_error . '</div>';
+    echo '<div class="lb-alert lb-alert-danger">' . $L['OAUTH_ERROR'] . ': ' . $oauth_error . '</div>';
 }
 
 if ($tab === 'navimow') {
@@ -70,11 +70,11 @@ function updateGatewayStatus() {
             const el = document.getElementById('gw_status_text');
             if (!el) return;
             if (data.pid) {
-                el.textContent = 'Running (PID ' + data.pid + ')';
+                el.textContent = '<?= $L['GATEWAY_RUNNING'] ?> (PID ' + data.pid + ')';
                 el.parentElement.style.cssText =
                     'background:#6dac20;color:black;border-color:#5a9a18;padding:.4rem .8rem;border-radius:4px;';
             } else {
-                el.textContent = 'Not running';
+                el.textContent = '<?= $L['GATEWAY_NOT_RUNNING'] ?>';
                 el.parentElement.style.cssText =
                     'background:#d0021b;color:white;border-color:#b00218;padding:.4rem .8rem;border-radius:4px;';
             }
@@ -91,14 +91,14 @@ function updateTokenStatus() {
             const expires = document.getElementById('token_expires');
             if (!badge) return;
             if (data.ok) {
-                badge.textContent = 'Authenticated';
+                badge.textContent = '<?= $L['TOKEN_AUTHENTICATED'] ?>';
                 badge.className   = 'lb-badge lb-badge-success';
                 val.textContent   = data.masked || '--';
                 const h = Math.floor(data.expires_in / 3600);
                 const m = Math.floor((data.expires_in % 3600) / 60);
                 expires.textContent = h + 'h ' + m + 'm';
             } else {
-                badge.textContent = 'Not authenticated';
+                badge.textContent = '<?= $L['TOKEN_NOT_AUTHENTICATED'] ?>';
                 badge.className   = 'lb-badge lb-badge-danger';
                 val.textContent   = '--';
                 expires.textContent = '--';
@@ -148,7 +148,7 @@ if (btnSaveMqtt) {
         .then(r => r.json())
         .then(data => {
             result.style.display = 'inline';
-            result.textContent   = data.error ? 'Error: ' + data.error : 'Saved.';
+            result.textContent   = data.error ? 'Error: ' + data.error : '<?= $L['MQTT_SAVED'] ?>';
             setTimeout(() => { result.style.display = 'none'; }, 3000);
         });
     });

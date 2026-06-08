@@ -5,33 +5,33 @@
     <div class="status" id="gw_status_text">--</div>
   </div>
   <div class="servicestatus-btns">
-    <a id="btn_restart" href="#" class="lb-btn lb-btn-sm lb-btn-icon" title="Restart">
-      <i class="lb-icon lb-icon-refresh"></i>
+    <a id="btn_restart" href="#" class="lb-btn lb-btn-sm">
+      <i class="lb-icon lb-icon-refresh"></i> <?= $L['GATEWAY_RESTART'] ?>
     </a>
-    <a id="btn_stop" href="#" class="lb-btn lb-btn-sm lb-btn-icon lb-btn-danger" title="Stop">
-      <i class="lb-icon lb-icon-stop"></i>
+    <a id="btn_stop" href="#" class="lb-btn lb-btn-sm lb-btn-danger">
+      <i class="lb-icon lb-icon-stop"></i> <?= $L['GATEWAY_STOP'] ?>
     </a>
   </div>
 </div>
 
 <!-- Token Status -->
 <div class="lb-card" style="margin-top:1.5rem;">
-  <div class="lb-card-header">Token Status</div>
+  <div class="lb-card-header"><?= $L['TOKEN_HEADER'] ?></div>
   <div class="lb-card-body">
     <div class="lb-form-row">
-      <div class="lb-form-label">Status</div>
+      <div class="lb-form-label"><?= $L['TOKEN_LABEL_STATUS'] ?></div>
       <div class="lb-form-field">
-        <span id="token_badge" class="lb-badge lb-badge-danger">Not authenticated</span>
+        <span id="token_badge" class="lb-badge lb-badge-danger"><?= $L['TOKEN_NOT_AUTHENTICATED'] ?></span>
       </div>
     </div>
     <div class="lb-form-row">
-      <div class="lb-form-label">Token</div>
+      <div class="lb-form-label"><?= $L['TOKEN_LABEL_TOKEN'] ?></div>
       <div class="lb-form-field">
         <code id="token_value" style="word-break:break-all">--</code>
       </div>
     </div>
     <div class="lb-form-row">
-      <div class="lb-form-label">Expires in</div>
+      <div class="lb-form-label"><?= $L['TOKEN_LABEL_EXPIRES'] ?></div>
       <div class="lb-form-field">
         <span id="token_expires">--</span>
       </div>
@@ -40,7 +40,7 @@
       <div class="lb-form-field">
         <a id="btn_authenticate" href="<?= $oauth_authorize_url ?>"
            class="lb-btn lb-btn-primary">
-          Authenticate with Navimow
+          <?= $L['TOKEN_BTN_AUTHENTICATE'] ?>
         </a>
       </div>
     </div>
@@ -49,10 +49,10 @@
 
 <!-- Devices -->
 <div class="lb-card" style="margin-top:1rem;">
-  <div class="lb-card-header">Devices</div>
+  <div class="lb-card-header"><?= $L['DEVICES_HEADER'] ?></div>
   <div class="lb-card-body" id="devices_list">
     <?php if (empty($plugincfg['devices'])): ?>
-      <p>No devices yet. Authenticate and restart the gateway to discover devices.</p>
+      <p><?= $L['DEVICES_NO_DEVICES'] ?></p>
     <?php else: ?>
       <ul class="lb-list">
         <?php foreach ($plugincfg['devices'] as $dev): ?>
