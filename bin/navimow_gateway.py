@@ -4,12 +4,12 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
+import re
 import signal
-import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
@@ -33,7 +33,6 @@ PID_FILE    = Path("/dev/shm/navimow_gateway.pid")
 _loglevel = _args.loglevel
 _logfile  = _args.logfile
 
-import logging
 _logger = logging.getLogger("navimow_gateway")
 _logger.propagate = False
 _logger.setLevel(logging.DEBUG)
@@ -72,6 +71,9 @@ def _logend() -> None:
     dbkey = _args.logdbkey
     if not dbkey:
         return
+    if not re.match(r'^[\w]+$', dbkey):
+        LOGWARN(f"_logend: invalid dbkey value, skipping LOGEND call")
+        return
     os.system(
         f'perl -e \'use LoxBerry::Log; '
         f'my $l = LoxBerry::Log->new(dbkey => "{dbkey}", append => 1); '
@@ -96,6 +98,7 @@ def _save_json_atomic(path: Path, data: dict) -> None:
             json.dump(data, f, indent=2)
         tmp.replace(path)
     except Exception as e:
+        tmp.unlink(missing_ok=True)
         LOGERR(f"Cannot write {path}: {e}")
 
 
@@ -132,7 +135,7 @@ def get_mqtt_broker_config(general: dict) -> dict:
 # ── PID management ────────────────────────────────────────────────────────────
 def write_pid() -> None:
     try:
-        PID_FILE.write_text(str(os.getpid()))
+        PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
     except Exception as e:
         LOGERR(f"Cannot write PID file: {e}")
 
@@ -145,20 +148,16 @@ def remove_pid() -> None:
 
 
 # ── Shutdown ──────────────────────────────────────────────────────────────────
-_shutdown_event: asyncio.Event | None = None
+_shutdown_event: asyncio.Event = asyncio.Event()
 
 
 def _handle_sigterm(*_) -> None:
     LOGINF("SIGTERM received — shutting down")
-    if _shutdown_event:
-        _shutdown_event.set()
+    _shutdown_event.set()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 async def main() -> None:
-    global _shutdown_event
-    _shutdown_event = asyncio.Event()
-
     LOGSTART("Navimow Gateway starting")
     write_pid()
 
