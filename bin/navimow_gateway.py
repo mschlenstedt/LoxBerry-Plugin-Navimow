@@ -267,6 +267,71 @@ async def task_navimow_to_mqtt(
                 await asyncio.sleep(10)
 
 
+# ── Task 8: LoxBerry MQTT → Navimow Commands ─────────────────────────────────
+async def task_mqtt_to_navimow(
+    sdk: "NavimowSDK",
+    base_topic: str,
+    broker: dict,
+    shutdown: asyncio.Event,
+) -> None:
+    """Subscribe to LoxBerry MQTT set-topics and forward commands to Navimow."""
+    mqtt_kwargs: dict = {
+        "hostname": broker["host"],
+        "port":     broker["port"],
+    }
+    if broker.get("username"):
+        mqtt_kwargs["username"] = broker["username"]
+    if broker.get("password"):
+        mqtt_kwargs["password"] = broker["password"]
+
+    while not shutdown.is_set():
+        try:
+            async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
+                await lbmqtt.subscribe(f"{base_topic}/+/set")
+                await lbmqtt.subscribe(f"{base_topic}/+/set/blade_height")
+                LOGINF(f"Subscribed to {base_topic}/+/set[/blade_height]")
+
+                async with lbmqtt.messages() as messages:
+                    async for message in messages:
+                        if shutdown.is_set():
+                            break
+                        topic_parts = str(message.topic).split("/")
+                        if len(topic_parts) < 3:
+                            continue
+                        is_blade = topic_parts[-1] == "blade_height"
+                        device_id = topic_parts[-3] if is_blade else topic_parts[-2]
+                        payload = message.payload.decode("utf-8", errors="replace").strip()
+
+                        if is_blade:
+                            try:
+                                height = int(payload)
+                                if 1 <= height <= 7:
+                                    sdk.set_blade_height(device_id, height)
+                                    LOGOK(f"set_blade_height({device_id}, {height})")
+                                else:
+                                    LOGWARN(f"blade_height out of range: {payload}")
+                            except ValueError:
+                                LOGWARN(f"Invalid blade_height payload: {payload}")
+                        else:
+                            cmd = payload.lower()
+                            if cmd == "start":
+                                sdk.start_mowing(device_id)
+                                LOGOK(f"start_mowing({device_id})")
+                            elif cmd == "pause":
+                                sdk.pause(device_id)
+                                LOGOK(f"pause({device_id})")
+                            elif cmd in ("dock", "return", "home"):
+                                sdk.return_to_base(device_id)
+                                LOGOK(f"return_to_base({device_id})")
+                            else:
+                                LOGWARN(f"Unknown command: {payload}")
+
+        except Exception as e:
+            if not shutdown.is_set():
+                LOGERR(f"Command MQTT error: {e} — reconnecting in 10s")
+                await asyncio.sleep(10)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 async def main() -> None:
     LOGSTART("Navimow Gateway starting")
@@ -332,7 +397,12 @@ async def main() -> None:
                 task_navimow_to_mqtt(navimow_sdk, base_topic, broker, _shutdown_event)
             ))
 
-        # Tasks 8–10 will be added here
+        if navimow_sdk:
+            tasks.append(asyncio.create_task(
+                task_mqtt_to_navimow(navimow_sdk, base_topic, broker, _shutdown_event)
+            ))
+
+        # Tasks 9–10 will be added here
 
         await _shutdown_event.wait()
 
