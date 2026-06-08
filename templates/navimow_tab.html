@@ -1,0 +1,70 @@
+<!-- Gateway Status Panel -->
+<div class="servicestatus" id="gw_status_panel">
+  <div class="servicestatus-info">
+    <div>Navimow Gateway</div>
+    <div class="status" id="gw_status_text">--</div>
+  </div>
+  <div class="servicestatus-btns">
+    <a id="btn_restart" href="#" class="lb-btn lb-btn-sm lb-btn-icon" title="Restart">
+      <i class="lb-icon lb-icon-refresh"></i>
+    </a>
+    <a id="btn_stop" href="#" class="lb-btn lb-btn-sm lb-btn-icon lb-btn-danger" title="Stop">
+      <i class="lb-icon lb-icon-stop"></i>
+    </a>
+  </div>
+</div>
+
+<!-- Token Status -->
+<div class="lb-card" style="margin-top:1.5rem;">
+  <div class="lb-card-header">Token Status</div>
+  <div class="lb-card-body">
+    <div class="lb-form-row">
+      <div class="lb-form-label">Status</div>
+      <div class="lb-form-field">
+        <span id="token_badge" class="lb-badge lb-badge-danger">Not authenticated</span>
+      </div>
+    </div>
+    <div class="lb-form-row">
+      <div class="lb-form-label">Token</div>
+      <div class="lb-form-field">
+        <code id="token_value" style="word-break:break-all">--</code>
+      </div>
+    </div>
+    <div class="lb-form-row">
+      <div class="lb-form-label">Expires in</div>
+      <div class="lb-form-field">
+        <span id="token_expires">--</span>
+      </div>
+    </div>
+    <div class="lb-form-row">
+      <div class="lb-form-field">
+        <a id="btn_authenticate" href="<?= $oauth_authorize_url ?>"
+           class="lb-btn lb-btn-primary">
+          Authenticate with Navimow
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Devices -->
+<div class="lb-card" style="margin-top:1rem;">
+  <div class="lb-card-header">Devices</div>
+  <div class="lb-card-body" id="devices_list">
+    <?php if (empty($plugincfg['devices'])): ?>
+      <p>No devices yet. Authenticate and restart the gateway to discover devices.</p>
+    <?php else: ?>
+      <ul class="lb-list">
+        <?php foreach ($plugincfg['devices'] as $dev): ?>
+          <li><?= htmlspecialchars($dev['name']) ?> <small>(<?= htmlspecialchars($dev['device_id']) ?>)</small></li>
+        <?php endforeach; ?>
+      </ul>
+    <?php endif; ?>
+  </div>
+</div>
+
+<!-- SDK credit -->
+<p style="margin-top:2rem; color:#888; font-size:0.85em;">
+  Powered by <a href="https://github.com/segwaynavimow/navimow-sdk" target="_blank">navimow-sdk</a>.
+  Thanks to the navimow-sdk contributors.
+</p>
