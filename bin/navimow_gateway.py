@@ -12,6 +12,9 @@ import sys
 import time
 from pathlib import Path
 
+import aiohttp
+from mower_sdk.api import MowerAPI
+
 # ── CLI args ──────────────────────────────────────────────────────────────────
 _ap = argparse.ArgumentParser(add_help=False)
 _ap.add_argument("--logfile",   default="")
@@ -156,6 +159,49 @@ def _handle_sigterm(*_) -> None:
     _shutdown_event.set()
 
 
+# ── REST constants ────────────────────────────────────────────────────────────
+API_BASE  = "https://navimow-fra.ninebot.com"
+TOKEN_URL = "https://navimow-fra.ninebot.com/openapi/oauth/getAccessToken"
+
+
+# ── Task 6: REST Initialization ───────────────────────────────────────────────
+async def rest_init(
+    plugin_cfg: dict,
+    session: aiohttp.ClientSession,
+) -> tuple:
+    """
+    Fetch device list and Navimow MQTT credentials via REST.
+    Returns (api, mqtt_info) where mqtt_info has mqttHost/mqttUrl/userName/pwdInfo.
+    Updates plugin_cfg['devices'] in place and persists.
+    """
+    token = plugin_cfg.get("access_token", "")
+    if not token:
+        LOGWARN("No access token — skipping REST init")
+        return None, {}
+
+    api = MowerAPI(session=session, token=token, base_url=API_BASE)
+
+    try:
+        devices = await api.async_get_devices()
+        LOGOK(f"Found {len(devices)} device(s) on account")
+        plugin_cfg["devices"] = [
+            {"device_id": d.id, "name": d.name}
+            for d in devices
+        ]
+        save_plugin_config(plugin_cfg)
+    except Exception as e:
+        LOGERR(f"REST get_devices failed: {e}")
+
+    try:
+        mqtt_info = await api.async_get_mqtt_user_info()
+        LOGINF(f"Navimow MQTT host: {mqtt_info.get('mqttHost', '?')}")
+    except Exception as e:
+        LOGERR(f"REST get_mqtt_user_info failed: {e}")
+        mqtt_info = {}
+
+    return api, mqtt_info
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 async def main() -> None:
     LOGSTART("Navimow Gateway starting")
@@ -180,8 +226,11 @@ async def main() -> None:
     if not plugin_cfg["access_token"]:
         LOGWARN("No access token configured — gateway will wait for authentication")
 
-    # Wait until shutdown signal
-    await _shutdown_event.wait()
+    async with aiohttp.ClientSession() as session:
+        api, mqtt_info = await rest_init(plugin_cfg, session)
+
+        # Tasks 7–10 will be added here
+        await _shutdown_event.wait()
 
     LOGINF("Gateway stopped")
     remove_pid()
