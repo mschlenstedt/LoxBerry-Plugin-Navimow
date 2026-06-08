@@ -25,7 +25,7 @@ $oauth_error = isset($_GET['oauth_error']) ? htmlspecialchars($_GET['oauth_error
 $scheme   = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
 $host     = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $folder   = basename($lbpplugindir);
-$callback = urlencode("$scheme://$host/plugins/$folder/oauth_callback.php");
+$callback = urlencode("$scheme://$host/admin/plugins/$folder/oauth_callback.php");
 $oauth_authorize_url =
     "https://navimow-h5-fra.willand.com/smartHome/login?channel=homeassistant"
     . "&redirect_uri=$callback";

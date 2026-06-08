@@ -20,7 +20,7 @@ if (!$code) {
 $scheme   = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
 $host     = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $folder   = basename($lbpplugindir);
-$callback = "$scheme://$host/plugins/$folder/oauth_callback.php";
+$callback = "$scheme://$host/admin/plugins/$folder/oauth_callback.php";
 
 $post_data = json_encode([
     'grant_type'    => 'authorization_code',
@@ -36,24 +36,41 @@ $ctx = stream_context_create([
         'header'  => "Content-Type: application/json\r\nContent-Length: " . strlen($post_data),
         'content' => $post_data,
         'timeout' => 15,
+        'ignore_errors' => true,
     ]
 ]);
 
 $response = @file_get_contents(TOKEN_URL, false, $ctx);
 if ($response === false) {
-    header("Location: index.php?tab=navimow&oauth_error=token_request_failed");
+    header("Location: index.php?tab=navimow&oauth_error=" . urlencode('token_request_failed'));
     exit;
 }
 
 $token_data = json_decode($response, true);
-$access_token  = $token_data['access_token']  ?? '';
-$refresh_token = $token_data['refresh_token'] ?? '';
-$expires_in    = (int)($token_data['expires_in'] ?? 3600);
-$token_type    = $token_data['token_type']    ?? 'Bearer';
+if (!is_array($token_data)) {
+    header("Location: index.php?tab=navimow&oauth_error=" . urlencode('invalid_response: ' . substr($response, 0, 100)));
+    exit;
+}
+
+// Some Navimow API responses wrap data in a nested structure
+$payload = $token_data;
+if (isset($token_data['data']) && is_array($token_data['data'])) {
+    $payload = $token_data['data'];
+}
+
+$access_token  = $payload['access_token']  ?? '';
+$refresh_token = $payload['refresh_token'] ?? '';
+$expires_in    = (int)($payload['expires_in'] ?? 3600);
+$token_type    = $payload['token_type']    ?? 'Bearer';
 
 if (!$access_token) {
-    $err_desc = $token_data['error_description'] ?? $token_data['error'] ?? 'empty_token';
-    header("Location: index.php?tab=navimow&oauth_error=" . urlencode($err_desc));
+    $err_msg = $payload['error_description']
+        ?? $payload['error']
+        ?? $token_data['desc']
+        ?? $token_data['error_description']
+        ?? $token_data['error']
+        ?? ('empty_token: ' . substr($response, 0, 200));
+    header("Location: index.php?tab=navimow&oauth_error=" . urlencode($err_msg));
     exit;
 }
 
