@@ -1,0 +1,8 @@
+{
+  "base_topic": "navimow",
+  "access_token": "",
+  "refresh_token": "",
+  "expires_at": 0,
+  "token_type": "Bearer",
+  "devices": []
+}
