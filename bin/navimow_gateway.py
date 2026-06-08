@@ -401,6 +401,78 @@ async def task_token_refresh(
             LOGERR(f"Token refresh error: {e}")
 
 
+# ── Task 10: REST Fallback ────────────────────────────────────────────────────
+_last_mqtt_update: float = 0.0
+
+
+def _on_navimow_state_tracked(msg: "DeviceStateMessage") -> None:
+    """Like _on_navimow_state but also records last update time."""
+    global _last_mqtt_update
+    _last_mqtt_update = time.time()
+    _on_navimow_state(msg)
+
+
+async def task_rest_fallback(
+    api: "MowerAPI",
+    plugin_cfg: dict,
+    base_topic: str,
+    broker: dict,
+    shutdown: asyncio.Event,
+) -> None:
+    """Poll Navimow REST every 60s if no MQTT update received in 90s."""
+    if api is None:
+        LOGINF("REST fallback disabled — no API client")
+        return
+
+    mqtt_kwargs: dict = {
+        "hostname": broker["host"],
+        "port":     broker["port"],
+    }
+    if broker.get("username"):
+        mqtt_kwargs["username"] = broker["username"]
+    if broker.get("password"):
+        mqtt_kwargs["password"] = broker["password"]
+
+    while not shutdown.is_set():
+        await asyncio.sleep(60)
+        if shutdown.is_set():
+            break
+
+        if time.time() - _last_mqtt_update < 90:
+            LOGDEB("REST fallback: recent MQTT data, skipping")
+            continue
+
+        LOGINF("REST fallback: polling device status")
+        device_ids = [d["device_id"] for d in plugin_cfg.get("devices", [])]
+        if not device_ids:
+            continue
+
+        try:
+            statuses = await api.async_get_device_statuses(device_ids)
+        except Exception as e:
+            LOGERR(f"REST fallback error: {e}")
+            continue
+
+        try:
+            async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
+                for device_id, status in statuses.items():
+                    payload = json.dumps({
+                        "state":   status.status.value,
+                        "battery": status.battery,
+                        "error":   status.error_code.value,
+                    })
+                    await lbmqtt.publish(
+                        f"{base_topic}/{device_id}/state", payload, retain=True
+                    )
+                    await lbmqtt.publish(
+                        f"{base_topic}/{device_id}/battery",
+                        str(status.battery), retain=True
+                    )
+                    LOGDEB(f"REST fallback published {device_id}: {status.status.value}")
+        except Exception as e:
+            LOGERR(f"REST fallback MQTT publish error: {e}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 async def main() -> None:
     LOGSTART("Navimow Gateway starting")
@@ -452,7 +524,7 @@ async def main() -> None:
                 auth_headers={"Authorization": f"Bearer {plugin_cfg['access_token']}"},
                 records=records,
             )
-            navimow_sdk.on_state(_on_navimow_state)
+            navimow_sdk.on_state(_on_navimow_state_tracked)
             navimow_sdk.connect()
             LOGINF("NavimowSDK connected to cloud MQTT")
         else:
@@ -475,7 +547,9 @@ async def main() -> None:
             task_token_refresh(plugin_cfg, session, navimow_sdk, _shutdown_event)
         ))
 
-        # Task 10 will be added here
+        tasks.append(asyncio.create_task(
+            task_rest_fallback(api, plugin_cfg, base_topic, broker, _shutdown_event)
+        ))
 
         await _shutdown_event.wait()
 
