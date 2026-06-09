@@ -14,6 +14,12 @@ LBPBINDIR="${LBHOMEDIR}/bin/plugins/${PLUGIN_FOLDER}"
 LBPCONFIGDIR="${LBHOMEDIR}/config/plugins/${PLUGIN_FOLDER}"
 LBPLOGDIR="${LBHOMEDIR}/log/plugins/${PLUGIN_FOLDER}"
 
+# Do not start if the gateway was manually stopped
+if [ -f "${LBPCONFIGDIR}/gateway_stopped" ]; then
+    logger "Navimow: gateway_stopped flag set — not starting"
+    exit 0
+fi
+
 GATEWAY="${LBPBINDIR}/navimow_gateway.py"
 
 if [ ! -f "$GATEWAY" ]; then
@@ -21,11 +27,20 @@ if [ ! -f "$GATEWAY" ]; then
     exit 1
 fi
 
-# Create log directory if missing
 mkdir -p "$LBPLOGDIR"
 
-LOGFILE="${LBPLOGDIR}/navimow_gateway.log"
-LOGDBKEY="navimow_${PLUGIN_FOLDER}_gateway"
+# Register log entry in LoxBerry log database and get filename + dbkey
+read LOGFILE LOGDBKEY < <(perl -e "
+    use LoxBerry::Log;
+    my \$log = LoxBerry::Log->new(name => 'gateway', package => '${LBHOMEDIR}/data/plugins/${PLUGIN_FOLDER}', addtime => 1);
+    \$log->LOGSTART('Navimow Gateway starting (boot)');
+    print \$log->{filename} . ' ' . (\$log->{dbkey} // 0) . \"\n\";
+")
+
+if [ -z "$LOGFILE" ]; then
+    LOGFILE="${LBPLOGDIR}/navimow_gateway.log"
+    LOGDBKEY="0"
+fi
 
 python3 "$GATEWAY" \
     --logfile    "$LOGFILE" \

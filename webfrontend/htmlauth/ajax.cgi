@@ -16,6 +16,7 @@ print $cgi->header(-type => 'application/json', -charset => 'UTF-8');
 
 my $pid_file    = '/dev/shm/navimow_gateway.pid';
 my $plugin_cfg  = "$lbpconfigdir/pluginconfig.json";
+my $stopped_flag = "$lbpconfigdir/gateway_stopped";
 
 if ($action eq 'getpid') {
     action_getpid();
@@ -55,6 +56,7 @@ sub action_getpid {
 sub action_stop {
     my $pid = read_pid();
     unless (defined $pid && pid_running($pid)) {
+        open(my $fh, '>', $stopped_flag) and close($fh);
         print encode_json({ ok => 1, msg => 'Not running' });
         return;
     }
@@ -68,6 +70,7 @@ sub action_stop {
         sleep 1;
     }
     unlink $pid_file if -f $pid_file;
+    open(my $fh, '>', $stopped_flag) and close($fh);
     print encode_json({ ok => 1, msg => 'Stopped' });
 }
 
@@ -82,6 +85,8 @@ sub action_restart {
         kill('KILL', $pid) if pid_running($pid);
     }
     unlink $pid_file if -f $pid_file;
+
+    unlink $stopped_flag if -f $stopped_flag;
 
     my $plugin_folder = $lbpplugindir;
     $plugin_folder =~ s{.*/plugins/}{};
