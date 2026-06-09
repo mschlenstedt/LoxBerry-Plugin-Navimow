@@ -18,6 +18,7 @@ from mower_sdk.api import MowerAPI
 import aiomqtt
 from mower_sdk.sdk import NavimowSDK
 from mower_sdk.models import DeviceStateMessage
+from mower_sdk.errors import MowerAPIError
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
 _ap = argparse.ArgumentParser(add_help=False)
@@ -220,6 +221,64 @@ def _handle_sigterm(*_) -> None:
     _shutdown_event.set()
 
 
+# ── State / Error normalisation ──────────────────────────────────────────────
+_STATE_CODES: dict[str, int] = {
+    "idle":      0,
+    "mowing":    1,
+    "paused":    2,
+    "docked":    3,
+    "charging":  4,
+    "error":     5,
+    "returning": 6,
+    "unknown":   99,
+}
+
+_ERROR_CODES: dict[str, int] = {
+    "none":         0,
+    "stuck":        1,
+    "lifted":       2,
+    "rain":         3,
+    "battery_low":  4,
+    "sensor_error": 5,
+    "motor_error":  6,
+    "blade_error":  7,
+    "unknown":      99,
+}
+
+
+_RESULT_CODES: dict[str, int] = {
+    "ok":    0,
+    "error": 1,
+}
+
+_REASON_CODES: dict[str, int] = {
+    "none":           0,
+    "ALREADY_MOWING": 1,
+    "BATTERY_LOW":    2,
+    "NOT_MOWING":     3,
+    "NOT_PAUSED":     4,
+    "ALREADY_DOCKED": 5,
+    "DEVICE_OFFLINE": 6,
+    "unknown":        99,
+}
+
+
+def _normalize_error(error) -> str:
+    """Normalize error value from either SDK path to a consistent string."""
+    if error is None:
+        return "none"
+    if isinstance(error, str):
+        return error
+    if isinstance(error, dict):
+        for key in ("type", "errorCode", "code", "error"):
+            val = error.get(key)
+            if isinstance(val, str) and val:
+                return val.lower()
+        LOGWARN(f"Unknown error dict structure from cloud: {error}")
+        return "unknown"
+    return "unknown"
+
+
 # ── REST constants ────────────────────────────────────────────────────────────
 API_BASE  = "https://navimow-fra.ninebot.com"
 TOKEN_URL = "https://navimow-fra.ninebot.com/openapi/oauth/getAccessToken"
@@ -300,25 +359,41 @@ async def task_navimow_to_mqtt(
                         continue
 
                     device_id = msg.device_id
+                    state_str = msg.state or "unknown"
+                    error_str = _normalize_error(msg.error)
                     state_payload = json.dumps({
-                        "state":   msg.state,
-                        "battery": msg.battery,
-                        "error":   msg.error,
+                        "state":     state_str,
+                        "state_num": _STATE_CODES.get(state_str, 99),
+                        "battery":   msg.battery,
+                        "error":     error_str,
+                        "error_num": _ERROR_CODES.get(error_str, 99),
                     })
                     await lbmqtt.publish(
                         f"{base_topic}/{device_id}/state", state_payload, retain=True
                     )
-                    if msg.battery is not None:
-                        await lbmqtt.publish(
-                            f"{base_topic}/{device_id}/battery",
-                            str(msg.battery), retain=True
-                        )
-                    LOGDEB(f"Published state for {device_id}: {msg.state}")
+                    LOGDEB(f"Published state for {device_id}: {state_str} / error={error_str}")
 
         except Exception as e:
             if not shutdown.is_set():
                 LOGERR(f"LoxBerry MQTT error: {e} — reconnecting in 10s")
                 await asyncio.sleep(10)
+
+
+async def _publish_command_result(
+    lbmqtt, base_topic: str, device_id: str, cmd: str, ok: bool, reason: str = "none"
+) -> None:
+    result_str = "ok" if ok else "error"
+    payload = json.dumps({
+        "command":    cmd,
+        "result":     result_str,
+        "result_num": _RESULT_CODES.get(result_str, 1),
+        "reason":     reason,
+        "reason_num": _REASON_CODES.get(reason, 99),
+    })
+    try:
+        await lbmqtt.publish(f"{base_topic}/{device_id}/command_result", payload, retain=False)
+    except Exception as e:
+        LOGWARN(f"Could not publish command_result: {e}")
 
 
 # ── Task 8: LoxBerry MQTT → Navimow Commands ─────────────────────────────────
@@ -355,21 +430,58 @@ async def task_mqtt_to_navimow(
                                 if 1 <= height <= 7:
                                     sdk.set_blade_height(device_id, height)
                                     LOGOK(f"set_blade_height({device_id}, {height})")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", True)
                                 else:
                                     LOGWARN(f"blade_height out of range: {payload}")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
                             except ValueError:
                                 LOGWARN(f"Invalid blade_height payload: {payload}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
+                            except MowerAPIError as e:
+                                reason = e.error_code or "unknown"
+                                LOGERR(f"set_blade_height({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, reason)
+                            except Exception as e:
+                                LOGERR(f"set_blade_height({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
                         else:
                             cmd = payload.lower()
                             if cmd == "start":
-                                sdk.start_mowing(device_id)
-                                LOGOK(f"start_mowing({device_id})")
+                                try:
+                                    sdk.start_mowing(device_id)
+                                    LOGOK(f"start_mowing({device_id})")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "start", True)
+                                except MowerAPIError as e:
+                                    reason = e.error_code or "unknown"
+                                    LOGERR(f"start_mowing({device_id}) failed: {e}")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "start", False, reason)
+                                except Exception as e:
+                                    LOGERR(f"start_mowing({device_id}) failed: {e}")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "start", False, "unknown")
                             elif cmd == "pause":
-                                sdk.pause(device_id)
-                                LOGOK(f"pause({device_id})")
+                                try:
+                                    sdk.pause(device_id)
+                                    LOGOK(f"pause({device_id})")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "pause", True)
+                                except MowerAPIError as e:
+                                    reason = e.error_code or "unknown"
+                                    LOGERR(f"pause({device_id}) failed: {e}")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, reason)
+                                except Exception as e:
+                                    LOGERR(f"pause({device_id}) failed: {e}")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, "unknown")
                             elif cmd in ("dock", "return", "home"):
-                                sdk.return_to_base(device_id)
-                                LOGOK(f"return_to_base({device_id})")
+                                try:
+                                    sdk.return_to_base(device_id)
+                                    LOGOK(f"return_to_base({device_id})")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "dock", True)
+                                except MowerAPIError as e:
+                                    reason = e.error_code or "unknown"
+                                    LOGERR(f"return_to_base({device_id}) failed: {e}")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, reason)
+                                except Exception as e:
+                                    LOGERR(f"return_to_base({device_id}) failed: {e}")
+                                    await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, "unknown")
                             else:
                                 LOGWARN(f"Unknown command: {payload}")
 
@@ -505,19 +617,19 @@ async def task_rest_fallback(
         try:
             async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
                 for device_id, status in statuses.items():
+                    state_str = status.status.value
+                    error_str = _normalize_error(status.error_code.value)
                     payload = json.dumps({
-                        "state":   status.status.value,
-                        "battery": status.battery,
-                        "error":   status.error_code.value,
+                        "state":     state_str,
+                        "state_num": _STATE_CODES.get(state_str, 99),
+                        "battery":   status.battery,
+                        "error":     error_str,
+                        "error_num": _ERROR_CODES.get(error_str, 99),
                     })
                     await lbmqtt.publish(
                         f"{base_topic}/{device_id}/state", payload, retain=True
                     )
-                    await lbmqtt.publish(
-                        f"{base_topic}/{device_id}/battery",
-                        str(status.battery), retain=True
-                    )
-                    LOGDEB(f"REST fallback published {device_id}: {status.status.value}")
+                    LOGDEB(f"REST fallback published {device_id}: {state_str} / error={error_str}")
         except Exception as e:
             LOGERR(f"REST fallback MQTT publish error: {e}")
 

@@ -19,9 +19,9 @@
   <thead><tr><th>Topic</th><th>Direction</th><th>Description</th></tr></thead>
   <tbody>
     <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/state</td>
-        <td>OUT</td><td>JSON: state, battery, error</td></tr>
-    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/battery</td>
-        <td>OUT</td><td>Integer 0&ndash;100</td></tr>
+        <td>OUT</td><td>JSON: state, state_num, battery, error, error_num</td></tr>
+    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/command_result</td>
+        <td>OUT</td><td>JSON: command, result, result_num, reason, reason_num</td></tr>
     <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set</td>
         <td>IN</td><td>start | pause | dock</td></tr>
     <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set/blade_height</td>
