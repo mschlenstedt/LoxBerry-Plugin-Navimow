@@ -16,55 +16,85 @@
   </a>
 </div>
 
-<!-- Authentication card -->
-<div class="lb-card" style="margin-bottom:1.5rem;">
-  <div class="lb-card-body">
-    <div class="lb-section-title"><TMPL_VAR "TOKEN.HEADER"></div>
-    <div class="lb-form-row">
-      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_STATUS"></div>
-      <div class="lb-form-field">
-        <span id="token_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "TOKEN.NOT_AUTHENTICATED"></span>
-      </div>
-    </div>
-    <div class="lb-form-row">
-      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_TOKEN"></div>
-      <div class="lb-form-field" style="overflow:visible; min-width:0;">
-        <code id="token_value" style="word-break:break-all; overflow-wrap:break-word; white-space:normal; display:block; max-width:100%;">--</code>
-      </div>
-    </div>
-    <div class="lb-form-row">
-      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_EXPIRES"></div>
-      <div class="lb-form-field">
-        <span id="token_expires">--</span>
-      </div>
-    </div>
-    <a id="btn_authenticate" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"
-       class="lb-btn lb-btn-primary" style="margin-top:0.75rem;">
-      <TMPL_VAR "TOKEN.BTN_AUTHENTICATE">
-    </a>
-  </div>
-</div>
+<!-- Three cards: Authentifizierung | Geräte | Navimow SDK -->
+<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-start; margin-bottom:1.5rem;">
 
-<!-- Devices card -->
-<div class="lb-card">
-  <div class="lb-card-body">
-    <div class="lb-section-title"><TMPL_VAR "DEVICES.HEADER"></div>
-    <div id="devices_list">
-      <TMPL_IF HAS_DEVICES>
-        <ul class="lb-list">
-          <TMPL_LOOP DEVICES>
-            <li><TMPL_VAR DEVICE_NAME> <small>(<TMPL_VAR DEVICE_ID>)</small></li>
-          </TMPL_LOOP>
-        </ul>
-      <TMPL_ELSE>
-        <p><TMPL_VAR "DEVICES.NO_DEVICES"></p>
-      </TMPL_IF>
+  <!-- Authentication card -->
+  <div class="lb-card" style="flex:1 1 200px;">
+    <div class="lb-card-body">
+      <div class="lb-section-title"><TMPL_VAR "TOKEN.HEADER"></div>
+      <div class="lb-form-row">
+        <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_STATUS"></div>
+        <div class="lb-form-field">
+          <span id="token_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "TOKEN.NOT_AUTHENTICATED"></span>
+        </div>
+      </div>
+      <div class="lb-form-row">
+        <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_TOKEN"></div>
+        <div class="lb-form-field" style="overflow:visible; min-width:0;">
+          <code id="token_value" style="word-break:break-all; overflow-wrap:break-word; white-space:normal; display:block; max-width:100%;">--</code>
+        </div>
+      </div>
+      <div class="lb-form-row">
+        <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_EXPIRES"></div>
+        <div class="lb-form-field">
+          <span id="token_expires">--</span>
+        </div>
+      </div>
+      <a id="btn_authenticate" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"
+         class="lb-btn lb-btn-primary" style="margin-top:0.75rem;">
+        <TMPL_VAR "TOKEN.BTN_AUTHENTICATE">
+      </a>
     </div>
   </div>
-</div>
 
-<!-- SDK credit -->
-<p style="margin-top:2rem; color:#888; font-size:0.85em;">
-  Powered by <a href="https://github.com/segwaynavimow/navimow-sdk" target="_blank">navimow-sdk</a>.
-  Thanks to the navimow-sdk contributors.
-</p>
+  <!-- Devices card -->
+  <div class="lb-card" style="flex:1 1 200px;">
+    <div class="lb-card-body">
+      <div class="lb-section-title"><TMPL_VAR "DEVICES.HEADER"></div>
+      <div id="devices_list">
+        <TMPL_IF HAS_DEVICES>
+          <ul class="lb-list">
+            <TMPL_LOOP DEVICES>
+              <li><TMPL_VAR DEVICE_NAME> <small>(<TMPL_VAR DEVICE_ID>)</small></li>
+            </TMPL_LOOP>
+          </ul>
+        <TMPL_ELSE>
+          <p><TMPL_VAR "DEVICES.NO_DEVICES"></p>
+        </TMPL_IF>
+      </div>
+    </div>
+  </div>
+
+  <!-- Navimow SDK card -->
+  <div class="lb-card" style="flex:1 1 200px;">
+    <div class="lb-card-body">
+      <div class="lb-section-title"><TMPL_VAR "SDK.HEADER"></div>
+      <div class="lb-form-row">
+        <div class="lb-form-label"><TMPL_VAR "SDK.LABEL_INSTALLED"></div>
+        <div class="lb-form-field">
+          <span id="sdk_installed">--</span>
+        </div>
+      </div>
+      <div class="lb-form-row">
+        <div class="lb-form-label"><TMPL_VAR "SDK.LABEL_AVAILABLE"></div>
+        <div class="lb-form-field">
+          <span id="sdk_available">--</span>
+        </div>
+      </div>
+      <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+        <a id="btn_sdk_update" href="#" class="lb-btn lb-btn-sm">
+          <TMPL_VAR "SDK.BTN_UPDATE">
+        </a>
+        <span id="sdk_update_status" style="display:none; color:#888; font-size:0.9em;">
+          <TMPL_VAR "SDK.UPDATING">
+        </span>
+      </div>
+      <p style="margin-top:1rem; color:#888; font-size:0.8em;">
+        Powered by <a href="https://github.com/segwaynavimow/navimow-sdk" target="_blank">navimow-sdk</a>.
+        Thanks to the navimow-sdk contributors.
+      </p>
+    </div>
+  </div>
+
+</div>

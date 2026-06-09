@@ -105,8 +105,65 @@ if (btnSaveMqtt) {
     });
 }
 
+let _sdkUpdatePoll = null;
+
+function updateSdkVersions() {
+    fetch('ajax.cgi?action=sdk_versions')
+        .then(r => r.json())
+        .then(data => {
+            const inst   = document.getElementById('sdk_installed');
+            const avail  = document.getElementById('sdk_available');
+            const btn    = document.getElementById('btn_sdk_update');
+            const status = document.getElementById('sdk_update_status');
+            if (inst)  inst.textContent  = data.installed || '?';
+            if (avail) avail.textContent = data.available || '?';
+            if (data.updating) {
+                if (btn)    btn.style.pointerEvents = 'none';
+                if (btn)    btn.classList.add('lb-btn-disabled');
+                if (status) status.style.display = '';
+            } else {
+                if (btn)    btn.style.pointerEvents = '';
+                if (btn)    btn.classList.remove('lb-btn-disabled');
+                if (status) status.style.display = 'none';
+                if (_sdkUpdatePoll) {
+                    clearInterval(_sdkUpdatePoll);
+                    _sdkUpdatePoll = null;
+                }
+            }
+        })
+        .catch(() => {});
+}
+
+const btnSdkUpdate = document.getElementById('btn_sdk_update');
+if (btnSdkUpdate) {
+    btnSdkUpdate.addEventListener('click', function(e) {
+        e.preventDefault();
+        this.style.pointerEvents = 'none';
+        this.classList.add('lb-btn-disabled');
+        const status = document.getElementById('sdk_update_status');
+        if (status) status.style.display = '';
+        fetch('ajax.cgi?action=sdk_update')
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    _sdkUpdatePoll = setInterval(updateSdkVersions, 2000);
+                } else {
+                    this.style.pointerEvents = '';
+                    this.classList.remove('lb-btn-disabled');
+                    if (status) status.style.display = 'none';
+                }
+            })
+            .catch(() => {
+                this.style.pointerEvents = '';
+                this.classList.remove('lb-btn-disabled');
+                if (status) { status.style.display = 'none'; }
+            });
+    });
+}
+
 updateGatewayStatus();
 updateTokenStatus();
+updateSdkVersions();
 setInterval(updateGatewayStatus, 5000);
 setInterval(updateTokenStatus,   30000);
 </script>
