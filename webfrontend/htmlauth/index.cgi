@@ -88,7 +88,7 @@ if ($form eq 'logs') {
 
 # Render
 LoxBerry::Web::lbheader($L{'BASIC.TITLE'} . " V$version",
-    "https://github.com/mschlenstedt/LoxBerry-Plugin-Navimow", "", 1);
+    "https://wiki.loxberry.de/plugins/navimow/start", "", 1);
 print $templateout->output();
 LoxBerry::Web::lbfooter();
 

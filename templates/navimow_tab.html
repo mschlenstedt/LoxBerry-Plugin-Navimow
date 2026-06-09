@@ -1,3 +1,18 @@
+<style>
+.lb-badge {
+  display: inline-block;
+  padding: 0.25em 0.65em;
+  font-size: 0.85em;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 0.35em;
+  white-space: nowrap;
+}
+.lb-badge-success { background: #6dac20; color: #fff; }
+.lb-badge-warning { background: #f5a623; color: #000; }
+.lb-badge-danger  { background: #d0021b; color: #fff; }
+</style>
+
 <TMPL_IF OAUTH_OK>
 <div class="lb-alert lb-alert-success"><TMPL_VAR "OAUTH.SUCCESS"></div>
 </TMPL_IF>
