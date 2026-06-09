@@ -17,7 +17,7 @@ import aiohttp
 from mower_sdk.api import MowerAPI
 import aiomqtt
 from mower_sdk.sdk import NavimowSDK
-from mower_sdk.models import DeviceStateMessage
+from mower_sdk.models import DeviceStateMessage, MowerCommand
 from mower_sdk.errors import MowerAPIError
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
@@ -398,12 +398,12 @@ async def _publish_command_result(
 
 # ── Task 8: LoxBerry MQTT → Navimow Commands ─────────────────────────────────
 async def task_mqtt_to_navimow(
-    sdk: "NavimowSDK",
+    api: "MowerAPI",
     base_topic: str,
     broker: dict,
     shutdown: asyncio.Event,
 ) -> None:
-    """Subscribe to LoxBerry MQTT set-topics and forward commands to Navimow."""
+    """Subscribe to LoxBerry MQTT set-topics and forward commands to Navimow via REST."""
     mqtt_kwargs = _build_mqtt_kwargs(broker)
 
     while not shutdown.is_set():
@@ -423,43 +423,31 @@ async def task_mqtt_to_navimow(
                     device_id = topic_parts[-3] if is_blade else topic_parts[-2]
                     payload = message.payload.decode("utf-8", errors="replace").strip()
 
+                    if api is None:
+                        LOGWARN(f"Command ignored — no API client available (device {device_id})")
+                        continue
+
                     if is_blade:
-                        try:
-                            height = int(payload)
-                            if 1 <= height <= 7:
-                                sdk.set_blade_height(device_id, height)
-                                LOGOK(f"set_blade_height({device_id}, {height})")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", True)
-                            else:
-                                LOGWARN(f"blade_height out of range: {payload}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
-                        except ValueError:
-                            LOGWARN(f"Invalid blade_height payload: {payload}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
-                        except MowerAPIError as e:
-                            reason = e.error_code or "unknown"
-                            LOGERR(f"set_blade_height({device_id}) failed: {e}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, reason)
-                        except Exception as e:
-                            LOGERR(f"set_blade_height({device_id}) failed: {e}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
+                        LOGWARN(f"blade_height not supported via REST API — command ignored (device {device_id})")
+                        await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
                     else:
                         cmd = payload.lower()
-                        if cmd == "start":
+                        if cmd in ("start", "resume"):
+                            mower_cmd = MowerCommand.START if cmd == "start" else MowerCommand.RESUME
                             try:
-                                sdk.start_mowing(device_id)
-                                LOGOK(f"start_mowing({device_id})")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "start", True)
+                                await api.async_send_command(device_id, mower_cmd)
+                                LOGOK(f"{cmd}({device_id})")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True)
                             except MowerAPIError as e:
                                 reason = e.error_code or "unknown"
-                                LOGERR(f"start_mowing({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "start", False, reason)
+                                LOGERR(f"{cmd}({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, reason)
                             except Exception as e:
-                                LOGERR(f"start_mowing({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "start", False, "unknown")
+                                LOGERR(f"{cmd}({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, "unknown")
                         elif cmd == "pause":
                             try:
-                                sdk.pause(device_id)
+                                await api.async_send_command(device_id, MowerCommand.PAUSE)
                                 LOGOK(f"pause({device_id})")
                                 await _publish_command_result(lbmqtt, base_topic, device_id, "pause", True)
                             except MowerAPIError as e:
@@ -471,15 +459,15 @@ async def task_mqtt_to_navimow(
                                 await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, "unknown")
                         elif cmd in ("dock", "return", "home"):
                             try:
-                                sdk.return_to_base(device_id)
-                                LOGOK(f"return_to_base({device_id})")
+                                await api.async_send_command(device_id, MowerCommand.DOCK)
+                                LOGOK(f"dock({device_id})")
                                 await _publish_command_result(lbmqtt, base_topic, device_id, "dock", True)
                             except MowerAPIError as e:
                                 reason = e.error_code or "unknown"
-                                LOGERR(f"return_to_base({device_id}) failed: {e}")
+                                LOGERR(f"dock({device_id}) failed: {e}")
                                 await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, reason)
                             except Exception as e:
-                                LOGERR(f"return_to_base({device_id}) failed: {e}")
+                                LOGERR(f"dock({device_id}) failed: {e}")
                                 await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, "unknown")
                         else:
                             LOGWARN(f"Unknown command: {payload}")
@@ -705,9 +693,9 @@ async def main() -> None:
                 task_navimow_to_mqtt(navimow_sdk, base_topic, broker, _shutdown_event)
             ))
 
-        if navimow_sdk:
+        if api:
             tasks.append(asyncio.create_task(
-                task_mqtt_to_navimow(navimow_sdk, base_topic, broker, _shutdown_event)
+                task_mqtt_to_navimow(api, base_topic, broker, _shutdown_event)
             ))
 
         tasks.append(asyncio.create_task(
