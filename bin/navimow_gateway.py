@@ -132,14 +132,22 @@ def _is_enabled(val) -> bool:
     return str(val).strip().lower() in ("true", "1", "yes", "on")
 
 
+def _str_or_none(val) -> "str | None":
+    """Return stripped string, or None if missing/empty."""
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s if s else None
+
+
 def get_mqtt_broker_config(general: dict) -> dict:
     """Extract LoxBerry MQTT broker settings from general.json."""
     mqtt = general.get("Mqtt", {})
 
     host     = mqtt.get("Brokerhost", "localhost")
     port     = int(mqtt.get("Brokerport", 1883))
-    username = mqtt.get("Brokeruser") or None
-    password = mqtt.get("Brokerpass") or None
+    username = _str_or_none(mqtt.get("Brokeruser"))
+    password = _str_or_none(mqtt.get("Brokerpass"))
 
     use_local = _is_enabled(mqtt.get("Uselocalbroker", "true"))
     tls = False
@@ -173,9 +181,9 @@ def _build_mqtt_kwargs(broker: dict) -> dict:
         "hostname": broker["host"],
         "port":     broker["port"],
     }
-    if broker.get("username"):
+    if broker["username"] is not None and broker["username"] != "":
         kwargs["username"] = broker["username"]
-    if broker.get("password"):
+    if broker["password"] is not None and broker["password"] != "":
         kwargs["password"] = broker["password"]
     if broker.get("tls"):
         ctx = ssl.create_default_context()
