@@ -14,9 +14,6 @@ LBPBINDIR="${LBHOMEDIR}/bin/plugins/${PLUGIN_FOLDER}"
 LBPCONFIGDIR="${LBHOMEDIR}/config/plugins/${PLUGIN_FOLDER}"
 LBPLOGDIR="${LBHOMEDIR}/log/plugins/${PLUGIN_FOLDER}"
 
-# Always create log directory (it lives on a RAM disk, cleared on every boot)
-mkdir -p "$LBPLOGDIR"
-
 # Do not start if the gateway was manually stopped
 if [ -f "${LBPCONFIGDIR}/gateway_stopped" ]; then
     logger "Navimow: gateway_stopped flag set — not starting"

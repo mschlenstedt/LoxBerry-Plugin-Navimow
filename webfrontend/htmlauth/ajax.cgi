@@ -93,9 +93,6 @@ sub action_restart {
     my $gateway = "$lbhomedir/bin/plugins/$plugin_folder/navimow_gateway.py";
     my $lbsconf = "$lbhomedir/config/system";
 
-    # Ensure log directory exists (may be absent on fresh install)
-    mkdir $lbplogdir unless -d $lbplogdir;
-
     # Register log entry in LoxBerry log database so loglist_html() finds it
     my ($logfile, $logdbkey);
     eval {
