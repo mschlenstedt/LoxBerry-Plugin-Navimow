@@ -208,6 +208,15 @@ sub action_sdk_update {
         return;
     }
 
+    my $plugin_folder = $lbpplugindir;
+    $plugin_folder =~ s{.*/plugins/}{};
+    my $update_script = "$lbssbindir/plugins/$plugin_folder/navimow_sdk_update.sh";
+
+    unless (-f $update_script) {
+        print encode_json({ ok => 0, error => "Update script not found: $update_script" });
+        return;
+    }
+
     { open my $fh, '>', "$lbpconfigdir/sdk_updating" }
 
     my ($logfile, $logdbkey);
@@ -221,8 +230,7 @@ sub action_sdk_update {
         $logfile  = $log->{filename};
         $logdbkey = $log->{dbkey} // 0;
     };
-    $logfile  //= "$lbplogdir/navimow_sdk_update.log";
-    $logdbkey //= 0;
+    $logfile //= "$lbplogdir/navimow_sdk_update.log";
 
     my $flag  = "$lbpconfigdir/sdk_updating";
     my $child = fork();
@@ -239,11 +247,7 @@ sub action_sdk_update {
             open(STDIN,  '<', '/dev/null');
             open(STDOUT, '>>', $logfile) or open(STDOUT, '>', '/dev/null');
             open(STDERR, '>>', $logfile) or open(STDERR, '>', '/dev/null');
-
-            my $rc = system('pip3', 'install', '--upgrade', 'navimow-sdk');
-            if ($rc != 0) {
-                $rc = system('pip3', 'install', '--upgrade', '--break-system-packages', 'navimow-sdk');
-            }
+            my $rc = system('sudo', $update_script);
             unlink $flag;
             exit($rc == 0 ? 0 : 1);
         }

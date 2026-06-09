@@ -1,24 +1,13 @@
 #!/bin/bash
-# Runs as root after plugin installation.
-# Installs Python dependencies globally (no venv).
+# postinstall.sh - Runs as user "loxberry" after plugin files are installed.
+# Python dependencies are installed by postroot.sh (runs as root).
 
-echo "Navimow: installing Python dependencies..."
+COMMAND=$0
+PTEMPDIR=$1
+PSHNAME=$2
+PDIR=$3
+PVERSION=$4
+PTEMPPATH=$6
 
-# Try without --break-system-packages first (pre-PEP-668 systems / pip < 23).
-# Fall back with the flag on Debian 12+ / Ubuntu 23+ where it is required.
-pip3 install --quiet \
-    "navimow-sdk>=0.1.2,<0.2" \
-    aiomqtt \
-    aiohttp 2>/dev/null \
-|| pip3 install --break-system-packages --quiet \
-    "navimow-sdk>=0.1.2,<0.2" \
-    aiomqtt \
-    aiohttp
-
-if [ $? -ne 0 ]; then
-    echo "Navimow: pip3 install failed" >&2
-    exit 1
-fi
-
-echo "Navimow: Python dependencies installed successfully"
+echo "<INFO> Navimow postinstall: nothing to do (Python deps handled by postroot.sh)"
 exit 0

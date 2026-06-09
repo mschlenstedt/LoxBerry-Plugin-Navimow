@@ -118,12 +118,10 @@ function updateSdkVersions() {
             if (inst)  inst.textContent  = data.installed || '?';
             if (avail) avail.textContent = data.available || '?';
             if (data.updating) {
-                if (btn)    btn.style.pointerEvents = 'none';
-                if (btn)    btn.classList.add('lb-btn-disabled');
+                if (btn)    btn.disabled = true;
                 if (status) status.style.display = '';
             } else {
-                if (btn)    btn.style.pointerEvents = '';
-                if (btn)    btn.classList.remove('lb-btn-disabled');
+                if (btn)    btn.disabled = false;
                 if (status) status.style.display = 'none';
                 if (_sdkUpdatePoll) {
                     clearInterval(_sdkUpdatePoll);
@@ -136,10 +134,8 @@ function updateSdkVersions() {
 
 const btnSdkUpdate = document.getElementById('btn_sdk_update');
 if (btnSdkUpdate) {
-    btnSdkUpdate.addEventListener('click', function(e) {
-        e.preventDefault();
-        this.style.pointerEvents = 'none';
-        this.classList.add('lb-btn-disabled');
+    btnSdkUpdate.addEventListener('click', function() {
+        this.disabled = true;
         const status = document.getElementById('sdk_update_status');
         if (status) status.style.display = '';
         fetch('ajax.cgi?action=sdk_update')
@@ -148,15 +144,13 @@ if (btnSdkUpdate) {
                 if (data.ok) {
                     _sdkUpdatePoll = setInterval(updateSdkVersions, 2000);
                 } else {
-                    this.style.pointerEvents = '';
-                    this.classList.remove('lb-btn-disabled');
+                    this.disabled = false;
                     if (status) status.style.display = 'none';
                 }
             })
             .catch(() => {
-                this.style.pointerEvents = '';
-                this.classList.remove('lb-btn-disabled');
-                if (status) { status.style.display = 'none'; }
+                this.disabled = false;
+                if (status) status.style.display = 'none';
             });
     });
 }
