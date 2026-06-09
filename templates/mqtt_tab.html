@@ -1,10 +1,11 @@
-<h3><TMPL_VAR "MQTT.HEADER"></h3>
+<div class="lb-section-title"><TMPL_VAR "MQTT.HEADER"></div>
 <div class="lb-form-row">
   <div class="lb-form-label"><TMPL_VAR "MQTT.LABEL_BASETOPIC"></div>
   <div class="lb-form-field">
     <input type="text" id="base_topic" name="base_topic" class="lb-input"
            value="<TMPL_VAR BASE_TOPIC>" placeholder="navimow"/>
   </div>
+  <div class="lb-form-help hint"><TMPL_VAR "MQTT.HELP_BASETOPIC"></div>
 </div>
 <div class="lb-form-row">
   <div class="lb-form-field">
@@ -13,7 +14,7 @@
   </div>
 </div>
 
-<h3 style="margin-top:2rem;"><TMPL_VAR "MQTT.TOPIC_SCHEMA"></h3>
+<div class="lb-section-title" style="margin-top:2rem;"><TMPL_VAR "MQTT.TOPIC_SCHEMA"></div>
 <p>MQTT broker connection settings are read from LoxBerry&rsquo;s <strong>general.json</strong>.</p>
 <table class="lb-table" style="font-family:monospace; font-size:0.9em;">
   <thead><tr><th>Topic</th><th>Direction</th><th>Description</th></tr></thead>

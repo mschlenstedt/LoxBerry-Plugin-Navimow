@@ -7,10 +7,10 @@ function updateGatewayStatus() {
             if (!el) return;
             if (data.pid) {
                 el.textContent = '<TMPL_VAR "GATEWAY.RUNNING"> (PID ' + data.pid + ')';
-                el.style.cssText = 'flex:1;padding:0.4rem 0.8rem;border-radius:4px;background:#6dac20;color:black;font-weight:500;';
+                el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#6dac20;color:black;font-weight:500;display:flex;align-items:center;';
             } else {
                 el.textContent = '<TMPL_VAR "GATEWAY.NOT_RUNNING">';
-                el.style.cssText = 'flex:1;padding:0.4rem 0.8rem;border-radius:4px;background:#d0021b;color:white;font-weight:500;';
+                el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#d0021b;color:white;font-weight:500;display:flex;align-items:center;';
             }
         })
         .catch(() => {});
