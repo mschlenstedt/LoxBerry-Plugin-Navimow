@@ -5,69 +5,54 @@
 <div class="lb-alert lb-alert-danger"><TMPL_VAR "OAUTH.ERROR">: <TMPL_VAR OAUTH_ERROR></div>
 </TMPL_IF>
 
-<!-- Gateway Status Panel -->
-<div class="servicestatus" id="gw_status_panel">
-  <div class="servicestatus-info">
-    <div>Navimow Gateway</div>
-    <div class="status" id="gw_status_text">--</div>
-  </div>
-  <div class="servicestatus-btns">
-    <a id="btn_restart" href="#" class="lb-btn lb-btn-sm">
-      <i class="lb-icon lb-icon-refresh"></i> <TMPL_VAR "GATEWAY.RESTART">
-    </a>
-    <a id="btn_stop" href="#" class="lb-btn lb-btn-sm lb-btn-danger">
-      <i class="lb-icon lb-icon-stop"></i> <TMPL_VAR "GATEWAY.STOP">
-    </a>
-  </div>
+<!-- Gateway Status: status badge + buttons in one row -->
+<div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:1.5rem;">
+  <div id="gw_status_text" style="flex:1; padding:0.4rem 0.8rem; border-radius:4px; background:#888; color:white; font-weight:500;">--</div>
+  <a id="btn_restart" href="#" class="lb-btn lb-btn-sm">
+    <i class="lb-icon lb-icon-refresh"></i> <TMPL_VAR "GATEWAY.RESTART">
+  </a>
+  <a id="btn_stop" href="#" class="lb-btn lb-btn-sm">
+    <i class="lb-icon lb-icon-stop"></i> <TMPL_VAR "GATEWAY.STOP">
+  </a>
 </div>
 
-<!-- Token Status -->
-<div class="lb-card" style="margin-top:1.5rem;">
-  <div class="lb-card-header"><TMPL_VAR "TOKEN.HEADER"></div>
-  <div class="lb-card-body">
-    <div class="lb-form-row">
-      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_STATUS"></div>
-      <div class="lb-form-field">
-        <span id="token_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "TOKEN.NOT_AUTHENTICATED"></span>
-      </div>
-    </div>
-    <div class="lb-form-row">
-      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_TOKEN"></div>
-      <div class="lb-form-field">
-        <code id="token_value" style="word-break:break-all">--</code>
-      </div>
-    </div>
-    <div class="lb-form-row">
-      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_EXPIRES"></div>
-      <div class="lb-form-field">
-        <span id="token_expires">--</span>
-      </div>
-    </div>
-    <div class="lb-form-row">
-      <div class="lb-form-field">
-        <a id="btn_authenticate" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"
-           class="lb-btn lb-btn-primary">
-          <TMPL_VAR "TOKEN.BTN_AUTHENTICATE">
-        </a>
-      </div>
-    </div>
+<!-- Authentication -->
+<h3><TMPL_VAR "TOKEN.HEADER"></h3>
+<div class="lb-form-row">
+  <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_STATUS"></div>
+  <div class="lb-form-field">
+    <span id="token_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "TOKEN.NOT_AUTHENTICATED"></span>
   </div>
 </div>
+<div class="lb-form-row">
+  <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_TOKEN"></div>
+  <div class="lb-form-field">
+    <code id="token_value" style="word-break:break-all">--</code>
+  </div>
+</div>
+<div class="lb-form-row">
+  <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_EXPIRES"></div>
+  <div class="lb-form-field">
+    <span id="token_expires">--</span>
+  </div>
+</div>
+<a id="btn_authenticate" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"
+   class="lb-btn lb-btn-primary" style="margin-top:0.75rem;">
+  <TMPL_VAR "TOKEN.BTN_AUTHENTICATE">
+</a>
 
 <!-- Devices -->
-<div class="lb-card" style="margin-top:1rem;">
-  <div class="lb-card-header"><TMPL_VAR "DEVICES.HEADER"></div>
-  <div class="lb-card-body" id="devices_list">
-    <TMPL_IF HAS_DEVICES>
-      <ul class="lb-list">
-        <TMPL_LOOP DEVICES>
-          <li><TMPL_VAR DEVICE_NAME> <small>(<TMPL_VAR DEVICE_ID>)</small></li>
-        </TMPL_LOOP>
-      </ul>
-    <TMPL_ELSE>
-      <p><TMPL_VAR "DEVICES.NO_DEVICES"></p>
-    </TMPL_IF>
-  </div>
+<h3 style="margin-top:2rem;"><TMPL_VAR "DEVICES.HEADER"></h3>
+<div id="devices_list">
+  <TMPL_IF HAS_DEVICES>
+    <ul class="lb-list">
+      <TMPL_LOOP DEVICES>
+        <li><TMPL_VAR DEVICE_NAME> <small>(<TMPL_VAR DEVICE_ID>)</small></li>
+      </TMPL_LOOP>
+    </ul>
+  <TMPL_ELSE>
+    <p><TMPL_VAR "DEVICES.NO_DEVICES"></p>
+  </TMPL_IF>
 </div>
 
 <!-- SDK credit -->

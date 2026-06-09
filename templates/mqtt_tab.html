@@ -1,38 +1,30 @@
-<div class="lb-card">
-  <div class="lb-card-header"><TMPL_VAR "MQTT.HEADER"></div>
-  <div class="lb-card-body">
-    <div class="lb-form-row">
-      <div class="lb-form-label"><TMPL_VAR "MQTT.LABEL_BASETOPIC"></div>
-      <div class="lb-form-field">
-        <input type="text" id="base_topic" name="base_topic" class="lb-input"
-               value="<TMPL_VAR BASE_TOPIC>" placeholder="navimow"/>
-      </div>
-    </div>
-    <div class="lb-form-row">
-      <div class="lb-form-field">
-        <button id="btn_save_mqtt" class="lb-btn lb-btn-primary"><TMPL_VAR "MQTT.BTN_SAVE"></button>
-        <span id="save_result" style="margin-left:1rem; display:none;"></span>
-      </div>
-    </div>
+<h3><TMPL_VAR "MQTT.HEADER"></h3>
+<div class="lb-form-row">
+  <div class="lb-form-label"><TMPL_VAR "MQTT.LABEL_BASETOPIC"></div>
+  <div class="lb-form-field">
+    <input type="text" id="base_topic" name="base_topic" class="lb-input"
+           value="<TMPL_VAR BASE_TOPIC>" placeholder="navimow"/>
+  </div>
+</div>
+<div class="lb-form-row">
+  <div class="lb-form-field">
+    <button id="btn_save_mqtt" class="lb-btn lb-btn-primary"><TMPL_VAR "MQTT.BTN_SAVE"></button>
+    <span id="save_result" style="margin-left:1rem; display:none;"></span>
   </div>
 </div>
 
-<div class="lb-card" style="margin-top:1rem;">
-  <div class="lb-card-header"><TMPL_VAR "MQTT.TOPIC_SCHEMA"></div>
-  <div class="lb-card-body">
-    <p>MQTT broker connection settings are read from LoxBerry&rsquo;s <strong>general.json</strong>.</p>
-    <table class="lb-table" style="font-family:monospace; font-size:0.9em;">
-      <thead><tr><th>Topic</th><th>Direction</th><th>Description</th></tr></thead>
-      <tbody>
-        <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/state</td>
-            <td>OUT</td><td>JSON: state, battery, error</td></tr>
-        <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/battery</td>
-            <td>OUT</td><td>Integer 0&ndash;100</td></tr>
-        <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/set</td>
-            <td>IN</td><td>start | pause | dock</td></tr>
-        <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/set/blade_height</td>
-            <td>IN</td><td>Integer 1&ndash;7</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
+<h3 style="margin-top:2rem;"><TMPL_VAR "MQTT.TOPIC_SCHEMA"></h3>
+<p>MQTT broker connection settings are read from LoxBerry&rsquo;s <strong>general.json</strong>.</p>
+<table class="lb-table" style="font-family:monospace; font-size:0.9em;">
+  <thead><tr><th>Topic</th><th>Direction</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/state</td>
+        <td>OUT</td><td>JSON: state, battery, error</td></tr>
+    <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/battery</td>
+        <td>OUT</td><td>Integer 0&ndash;100</td></tr>
+    <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/set</td>
+        <td>IN</td><td>start | pause | dock</td></tr>
+    <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/set/blade_height</td>
+        <td>IN</td><td>Integer 1&ndash;7</td></tr>
+  </tbody>
+</table>
