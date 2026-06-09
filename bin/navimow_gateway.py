@@ -246,23 +246,6 @@ _ERROR_CODES: dict[str, int] = {
 }
 
 
-_RESULT_CODES: dict[str, int] = {
-    "ok":    0,
-    "error": 1,
-}
-
-_REASON_CODES: dict[str, int] = {
-    "none":           0,
-    "ALREADY_MOWING": 1,
-    "BATTERY_LOW":    2,
-    "NOT_MOWING":     3,
-    "NOT_PAUSED":     4,
-    "ALREADY_DOCKED": 5,
-    "DEVICE_OFFLINE": 6,
-    "unknown":        99,
-}
-
-
 def _normalize_error(error) -> str:
     """Normalize error value from either SDK path to a consistent string."""
     if error is None:
@@ -361,13 +344,18 @@ async def task_navimow_to_mqtt(
                     device_id = msg.device_id
                     state_str = msg.state or "unknown"
                     error_str = _normalize_error(msg.error)
-                    state_payload = json.dumps({
+                    data: dict = {
                         "state":     state_str,
                         "state_num": _STATE_CODES.get(state_str, 99),
                         "battery":   msg.battery,
                         "error":     error_str,
                         "error_num": _ERROR_CODES.get(error_str, 99),
-                    })
+                    }
+                    if msg.signal_strength is not None:
+                        data["signal_strength"] = msg.signal_strength
+                    if msg.position is not None:
+                        data["position"] = msg.position
+                    state_payload = json.dumps(data)
                     await lbmqtt.publish(
                         f"{base_topic}/{device_id}/state", state_payload, retain=True
                     )
@@ -382,13 +370,11 @@ async def task_navimow_to_mqtt(
 async def _publish_command_result(
     lbmqtt, base_topic: str, device_id: str, cmd: str, ok: bool, reason: str = "none"
 ) -> None:
-    result_str = "ok" if ok else "error"
     payload = json.dumps({
         "command":    cmd,
-        "result":     result_str,
-        "result_num": _RESULT_CODES.get(result_str, 1),
+        "result":     "ok" if ok else "error",
+        "result_num": 0 if ok else 1,
         "reason":     reason,
-        "reason_num": _REASON_CODES.get(reason, 99),
     })
     try:
         await lbmqtt.publish(f"{base_topic}/{device_id}/command_result", payload, retain=False)
@@ -410,8 +396,7 @@ async def task_mqtt_to_navimow(
         try:
             async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
                 await lbmqtt.subscribe(f"{base_topic}/+/set")
-                await lbmqtt.subscribe(f"{base_topic}/+/set/blade_height")
-                LOGINF(f"Subscribed to {base_topic}/+/set[/blade_height]")
+                LOGINF(f"Subscribed to {base_topic}/+/set")
 
                 async for message in lbmqtt.messages:
                     if shutdown.is_set():
@@ -419,58 +404,53 @@ async def task_mqtt_to_navimow(
                     topic_parts = str(message.topic).split("/")
                     if len(topic_parts) < 3:
                         continue
-                    is_blade = topic_parts[-1] == "blade_height"
-                    device_id = topic_parts[-3] if is_blade else topic_parts[-2]
+                    device_id = topic_parts[-2]
                     payload = message.payload.decode("utf-8", errors="replace").strip()
 
                     if api is None:
                         LOGWARN(f"Command ignored — no API client available (device {device_id})")
                         continue
 
-                    if is_blade:
-                        LOGWARN(f"blade_height not supported via REST API — command ignored (device {device_id})")
-                        await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
+                    cmd = payload.lower()
+                    if cmd in ("start", "resume"):
+                        mower_cmd = MowerCommand.START if cmd == "start" else MowerCommand.RESUME
+                        try:
+                            await api.async_send_command(device_id, mower_cmd)
+                            LOGOK(f"{cmd}({device_id})")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True)
+                        except MowerAPIError as e:
+                            reason = e.error_code or "unknown"
+                            LOGERR(f"{cmd}({device_id}) failed: {e}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, reason)
+                        except Exception as e:
+                            LOGERR(f"{cmd}({device_id}) failed: {e}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, "unknown")
+                    elif cmd == "pause":
+                        try:
+                            await api.async_send_command(device_id, MowerCommand.PAUSE)
+                            LOGOK(f"pause({device_id})")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "pause", True)
+                        except MowerAPIError as e:
+                            reason = e.error_code or "unknown"
+                            LOGERR(f"pause({device_id}) failed: {e}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, reason)
+                        except Exception as e:
+                            LOGERR(f"pause({device_id}) failed: {e}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, "unknown")
+                    elif cmd in ("dock", "return", "home"):
+                        try:
+                            await api.async_send_command(device_id, MowerCommand.DOCK)
+                            LOGOK(f"dock({device_id})")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "dock", True)
+                        except MowerAPIError as e:
+                            reason = e.error_code or "unknown"
+                            LOGERR(f"dock({device_id}) failed: {e}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, reason)
+                        except Exception as e:
+                            LOGERR(f"dock({device_id}) failed: {e}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, "unknown")
                     else:
-                        cmd = payload.lower()
-                        if cmd in ("start", "resume"):
-                            mower_cmd = MowerCommand.START if cmd == "start" else MowerCommand.RESUME
-                            try:
-                                await api.async_send_command(device_id, mower_cmd)
-                                LOGOK(f"{cmd}({device_id})")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True)
-                            except MowerAPIError as e:
-                                reason = e.error_code or "unknown"
-                                LOGERR(f"{cmd}({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, reason)
-                            except Exception as e:
-                                LOGERR(f"{cmd}({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, "unknown")
-                        elif cmd == "pause":
-                            try:
-                                await api.async_send_command(device_id, MowerCommand.PAUSE)
-                                LOGOK(f"pause({device_id})")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "pause", True)
-                            except MowerAPIError as e:
-                                reason = e.error_code or "unknown"
-                                LOGERR(f"pause({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, reason)
-                            except Exception as e:
-                                LOGERR(f"pause({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, "unknown")
-                        elif cmd in ("dock", "return", "home"):
-                            try:
-                                await api.async_send_command(device_id, MowerCommand.DOCK)
-                                LOGOK(f"dock({device_id})")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "dock", True)
-                            except MowerAPIError as e:
-                                reason = e.error_code or "unknown"
-                                LOGERR(f"dock({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, reason)
-                            except Exception as e:
-                                LOGERR(f"dock({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, "unknown")
-                        else:
-                            LOGWARN(f"Unknown command: {payload}")
+                        LOGWARN(f"Unknown command: {payload}")
 
         except Exception as e:
             if not shutdown.is_set():
@@ -605,16 +585,20 @@ async def task_rest_fallback(
             async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
                 for device_id, status in statuses.items():
                     state_str = status.status.value
-                    error_str = _normalize_error(status.error_code.value)
-                    payload = json.dumps({
+                    error_str = status.error_code.value
+                    data: dict = {
                         "state":     state_str,
                         "state_num": _STATE_CODES.get(state_str, 99),
                         "battery":   status.battery,
                         "error":     error_str,
                         "error_num": _ERROR_CODES.get(error_str, 99),
-                    })
+                    }
+                    if status.signal_strength is not None:
+                        data["signal_strength"] = status.signal_strength
+                    if status.position is not None:
+                        data["position"] = status.position
                     await lbmqtt.publish(
-                        f"{base_topic}/{device_id}/state", payload, retain=True
+                        f"{base_topic}/{device_id}/state", json.dumps(data), retain=True
                     )
                     LOGDEB(f"REST fallback published {device_id}: {state_str} / error={error_str}")
         except Exception as e:
