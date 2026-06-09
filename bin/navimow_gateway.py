@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import signal
+import ssl
 import sys
 import time
 from pathlib import Path
@@ -127,15 +128,64 @@ def save_plugin_config(cfg: dict) -> None:
     _save_json_atomic(PLUGIN_CFG, cfg)
 
 
+def _is_enabled(val) -> bool:
+    return str(val).strip().lower() in ("true", "1", "yes", "on")
+
+
 def get_mqtt_broker_config(general: dict) -> dict:
     """Extract LoxBerry MQTT broker settings from general.json."""
     mqtt = general.get("Mqtt", {})
+
+    host     = mqtt.get("Brokerhost", "localhost")
+    port     = int(mqtt.get("Brokerport", 1883))
+    username = mqtt.get("Brokeruser") or None
+    password = mqtt.get("Brokerpass") or None
+
+    use_local = _is_enabled(mqtt.get("Uselocalbroker", "true"))
+    tls = False
+    tls_verify = False
+    tls_cafile = None
+
+    if use_local and _is_enabled(mqtt.get("Tlsenabled", "false")):
+        tls       = True
+        tls_verify = False  # local broker uses self-signed CA
+        tls_cafile = "/etc/mosquitto/tls/ca.crt"
+        port       = int(mqtt.get("Tlsport", 8883))
+    elif not use_local and _is_enabled(mqtt.get("TlsExternalEnabled", "false")):
+        tls        = True
+        tls_verify = _is_enabled(mqtt.get("TlsExternalValidatecert", "false"))
+        tls_cafile = None  # use system CA bundle for external broker
+
     return {
-        "host":     mqtt.get("Brokerhost", "localhost"),
-        "port":     int(mqtt.get("Brokerport", 1883)),
-        "username": mqtt.get("Username", "") or None,
-        "password": mqtt.get("Password", "") or None,
+        "host":       host,
+        "port":       port,
+        "username":   username,
+        "password":   password,
+        "tls":        tls,
+        "tls_verify": tls_verify,
+        "tls_cafile": tls_cafile,
     }
+
+
+def _build_mqtt_kwargs(broker: dict) -> dict:
+    """Build aiomqtt.Client keyword arguments from broker config dict."""
+    kwargs: dict = {
+        "hostname": broker["host"],
+        "port":     broker["port"],
+    }
+    if broker.get("username"):
+        kwargs["username"] = broker["username"]
+    if broker.get("password"):
+        kwargs["password"] = broker["password"]
+    if broker.get("tls"):
+        ctx = ssl.create_default_context()
+        if not broker.get("tls_verify"):
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        elif broker.get("tls_cafile") and os.path.isfile(broker["tls_cafile"]):
+            ctx.load_verify_locations(broker["tls_cafile"])
+        kwargs["tls_context"] = ctx
+    return kwargs
 
 
 # ── PID management ────────────────────────────────────────────────────────────
@@ -227,14 +277,7 @@ async def task_navimow_to_mqtt(
     shutdown: asyncio.Event,
 ) -> None:
     """Publish Navimow state updates to LoxBerry MQTT broker."""
-    mqtt_kwargs: dict = {
-        "hostname": broker["host"],
-        "port":     broker["port"],
-    }
-    if broker.get("username"):
-        mqtt_kwargs["username"] = broker["username"]
-    if broker.get("password"):
-        mqtt_kwargs["password"] = broker["password"]
+    mqtt_kwargs = _build_mqtt_kwargs(broker)
 
     while not shutdown.is_set():
         try:
@@ -278,14 +321,7 @@ async def task_mqtt_to_navimow(
     shutdown: asyncio.Event,
 ) -> None:
     """Subscribe to LoxBerry MQTT set-topics and forward commands to Navimow."""
-    mqtt_kwargs: dict = {
-        "hostname": broker["host"],
-        "port":     broker["port"],
-    }
-    if broker.get("username"):
-        mqtt_kwargs["username"] = broker["username"]
-    if broker.get("password"):
-        mqtt_kwargs["password"] = broker["password"]
+    mqtt_kwargs = _build_mqtt_kwargs(broker)
 
     while not shutdown.is_set():
         try:
@@ -430,14 +466,7 @@ async def task_rest_fallback(
         LOGINF("REST fallback disabled — no API client")
         return
 
-    mqtt_kwargs: dict = {
-        "hostname": broker["host"],
-        "port":     broker["port"],
-    }
-    if broker.get("username"):
-        mqtt_kwargs["username"] = broker["username"]
-    if broker.get("password"):
-        mqtt_kwargs["password"] = broker["password"]
+    mqtt_kwargs = _build_mqtt_kwargs(broker)
 
     while not shutdown.is_set():
         await asyncio.sleep(60)
@@ -496,7 +525,7 @@ async def main() -> None:
     plugin_cfg = load_plugin_config()
     broker = get_mqtt_broker_config(general)
 
-    LOGINF(f"LoxBerry MQTT broker: {broker['host']}:{broker['port']}")
+    LOGINF(f"LoxBerry MQTT broker: {broker['host']}:{broker['port']} tls={broker['tls']} user={'set' if broker['username'] else 'none'}")
     LOGINF(f"Base topic: {plugin_cfg['base_topic']}")
     LOGINF(f"Devices cached: {len(plugin_cfg['devices'])}")
 
