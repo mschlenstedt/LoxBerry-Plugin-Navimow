@@ -2,6 +2,10 @@
 # Runs as root after plugin installation.
 # Installs Python dependencies globally (no venv).
 
+echo "Navimow: creating plugin directories..."
+mkdir -p "$PLOG"
+echo "<OK> Plugin log directory created: $PLOG"
+
 echo "Navimow: installing Python dependencies..."
 
 # Try without --break-system-packages first (pre-PEP-668 systems / pip < 23).
