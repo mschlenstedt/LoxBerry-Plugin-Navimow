@@ -365,19 +365,22 @@ async def task_token_refresh(
         try:
             async with session.post(
                 TOKEN_URL,
-                json={
+                data={
                     "grant_type":    "refresh_token",
                     "refresh_token": refresh_token,
                     "client_id":     CLIENT_ID,
                     "client_secret": CLIENT_SECRET,
                 },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
             ) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     LOGERR(f"Token refresh HTTP {resp.status}: {body[:200]}")
                     continue
-                data = await resp.json()
+                raw  = await resp.json(content_type=None)
 
+            # API may wrap tokens inside a 'data' key
+            data        = raw.get("data", raw) if isinstance(raw.get("data"), dict) else raw
             new_token   = data.get("access_token", "")
             new_refresh = data.get("refresh_token", refresh_token)
             expires_in  = int(data.get("expires_in", 3600))

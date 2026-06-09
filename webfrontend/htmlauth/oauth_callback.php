@@ -9,11 +9,11 @@ $code  = isset($_GET['code'])  ? trim($_GET['code'])  : '';
 $error = isset($_GET['error']) ? trim($_GET['error']) : '';
 
 if ($error) {
-    header("Location: index.php?tab=navimow&oauth_error=" . urlencode($error));
+    header("Location: index.cgi?form=navimow&oauth_error=" . urlencode($error));
     exit;
 }
 if (!$code) {
-    header("Location: index.php?tab=navimow&oauth_error=no_code");
+    header("Location: index.cgi?form=navimow&oauth_error=no_code");
     exit;
 }
 
@@ -22,7 +22,8 @@ $host     = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $folder   = basename($lbpplugindir);
 $callback = "$scheme://$host/admin/plugins/$folder/oauth_callback.php";
 
-$post_data = json_encode([
+// OAuth2 token endpoint expects application/x-www-form-urlencoded
+$post_data = http_build_query([
     'grant_type'    => 'authorization_code',
     'code'          => $code,
     'redirect_uri'  => $callback,
@@ -32,27 +33,27 @@ $post_data = json_encode([
 
 $ctx = stream_context_create([
     'http' => [
-        'method'  => 'POST',
-        'header'  => "Content-Type: application/json\r\nContent-Length: " . strlen($post_data),
-        'content' => $post_data,
-        'timeout' => 15,
+        'method'        => 'POST',
+        'header'        => "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: " . strlen($post_data),
+        'content'       => $post_data,
+        'timeout'       => 15,
         'ignore_errors' => true,
     ]
 ]);
 
 $response = @file_get_contents(TOKEN_URL, false, $ctx);
 if ($response === false) {
-    header("Location: index.php?tab=navimow&oauth_error=" . urlencode('token_request_failed'));
+    header("Location: index.cgi?form=navimow&oauth_error=" . urlencode('token_request_failed'));
     exit;
 }
 
 $token_data = json_decode($response, true);
 if (!is_array($token_data)) {
-    header("Location: index.php?tab=navimow&oauth_error=" . urlencode('invalid_response: ' . substr($response, 0, 100)));
+    header("Location: index.cgi?form=navimow&oauth_error=" . urlencode('invalid_response: ' . substr($response, 0, 100)));
     exit;
 }
 
-// Some Navimow API responses wrap data in a nested structure
+// Navimow API may wrap tokens inside a 'data' key
 $payload = $token_data;
 if (isset($token_data['data']) && is_array($token_data['data'])) {
     $payload = $token_data['data'];
@@ -70,7 +71,7 @@ if (!$access_token) {
         ?? $token_data['error_description']
         ?? $token_data['error']
         ?? ('empty_token: ' . substr($response, 0, 200));
-    header("Location: index.php?tab=navimow&oauth_error=" . urlencode($err_msg));
+    header("Location: index.cgi?form=navimow&oauth_error=" . urlencode($err_msg));
     exit;
 }
 
@@ -88,5 +89,5 @@ $tmp = $cfg_path . '.tmp';
 file_put_contents($tmp, json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 rename($tmp, $cfg_path);
 
-header("Location: index.php?tab=navimow&oauth_ok=1");
+header("Location: index.cgi?form=navimow&oauth_ok=1");
 exit;
