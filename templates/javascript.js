@@ -37,6 +37,10 @@ function updateTokenStatus() {
                 const h = Math.floor(data.expires_in / 3600);
                 const m = Math.floor((data.expires_in % 3600) / 60);
                 expires.textContent = h + 'h ' + m + 'm';
+            } else if (data.has_refresh) {
+                badge.textContent = '<TMPL_VAR "TOKEN.EXPIRED_REFRESH">';
+                badge.className   = 'lb-badge lb-badge-warning';
+                expires.textContent = '--';
             } else {
                 badge.textContent = '<TMPL_VAR "TOKEN.NOT_AUTHENTICATED">';
                 badge.className   = 'lb-badge lb-badge-danger';

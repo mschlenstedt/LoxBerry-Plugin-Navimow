@@ -164,15 +164,18 @@ sub action_gettokenstatus {
         eval { $cfg = decode_json(<$fh>); };
     }
 
-    my $token      = $cfg->{access_token} // '';
-    my $expires_at = $cfg->{expires_at}   // 0;
-    my $now        = time();
-    my $valid      = ($token ne '' && $expires_at > $now) ? 1 : 0;
-    my $expires_in = $expires_at > $now ? $expires_at - $now : 0;
+    my $token         = $cfg->{access_token}  // '';
+    my $refresh_token = $cfg->{refresh_token} // '';
+    my $expires_at    = $cfg->{expires_at}    // 0;
+    my $now           = time();
+    my $valid         = ($token ne '' && $expires_at > $now) ? 1 : 0;
+    my $expires_in    = $expires_at > $now ? $expires_at - $now : 0;
+    my $has_refresh   = ($refresh_token ne '') ? 1 : 0;
 
     print encode_json({
-        ok         => $valid,
-        masked     => $token,
-        expires_in => $expires_in+0,
+        ok          => $valid,
+        masked      => $token,
+        expires_in  => $expires_in+0,
+        has_refresh => $has_refresh,
     });
 }
