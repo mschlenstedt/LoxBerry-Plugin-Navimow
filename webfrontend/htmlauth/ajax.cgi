@@ -7,6 +7,7 @@ use JSON;
 use POSIX qw(setsid);
 use LoxBerry::System;
 use LoxBerry::IO;
+use LoxBerry::Log;
 
 my $cgi    = CGI->new;
 my $action = $cgi->param('action') // $cgi->param('ajax') // '';
@@ -84,10 +85,18 @@ sub action_restart {
 
     my $plugin_folder = $lbpplugindir;
     $plugin_folder =~ s{.*/plugins/}{};
-    my $gateway  = "$lbhomedir/bin/plugins/$plugin_folder/navimow_gateway.py";
-    my $logfile  = "$lbplogdir/navimow_gateway.log";
-    my $logdbkey = "navimow_${plugin_folder}_gateway";
-    my $lbsconf  = "$lbhomedir/config/system";
+    my $gateway = "$lbhomedir/bin/plugins/$plugin_folder/navimow_gateway.py";
+    my $lbsconf = "$lbhomedir/config/system";
+
+    # Register log entry in LoxBerry log database so loglist_html() finds it
+    my $log = LoxBerry::Log->new(
+        name    => 'gateway',
+        package => $lbpplugindir,
+        addtime => 1,
+    );
+    $log->LOGSTART("Navimow Gateway starting");
+    my $logfile  = $log->{filename};
+    my $logdbkey = $log->{dbkey} // 0;
 
     unless (-f $gateway) {
         print encode_json({ ok => 0, error => "Gateway not found: $gateway" });
