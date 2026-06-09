@@ -56,7 +56,7 @@ sub action_getpid {
 sub action_stop {
     my $pid = read_pid();
     unless (defined $pid && pid_running($pid)) {
-        open(my $fh, '>', $stopped_flag) and close($fh);
+        { open my $fh, '>', $stopped_flag }
         print encode_json({ ok => 1, msg => 'Not running' });
         return;
     }
@@ -70,7 +70,7 @@ sub action_stop {
         sleep 1;
     }
     unlink $pid_file if -f $pid_file;
-    open(my $fh, '>', $stopped_flag) and close($fh);
+    { open my $fh, '>', $stopped_flag }
     print encode_json({ ok => 1, msg => 'Stopped' });
 }
 

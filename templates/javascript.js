@@ -53,9 +53,17 @@ if (btnRestart) {
         this.classList.add('lb-btn-loading');
         fetch('ajax.cgi?action=restart')
             .then(r => r.json())
-            .then(() => {
+            .then(data => {
                 btnRestart.classList.remove('lb-btn-loading');
-                updateGatewayStatus();
+                if (data && !data.ok && data.error) {
+                    const el = document.getElementById('gw_status_text');
+                    if (el) {
+                        el.textContent = 'Fehler: ' + data.error;
+                        el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#f5a623;color:black;font-weight:500;display:flex;align-items:center;';
+                    }
+                } else {
+                    setTimeout(updateGatewayStatus, 1000);
+                }
             })
             .catch(() => btnRestart.classList.remove('lb-btn-loading'));
     });
