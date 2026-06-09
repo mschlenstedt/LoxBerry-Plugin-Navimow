@@ -380,6 +380,51 @@ async def task_mqtt_to_navimow(
 
 
 # ── Task 9: Token Refresh Watchdog ────────────────────────────────────────────
+async def _do_token_refresh(plugin_cfg: dict, session: aiohttp.ClientSession) -> bool:
+    """Exchange refresh_token for a new access_token. Updates plugin_cfg and saves. Returns True on success."""
+    refresh_token = plugin_cfg.get("refresh_token", "")
+    if not refresh_token:
+        LOGERR("No refresh_token available — re-authentication required")
+        return False
+
+    try:
+        async with session.post(
+            TOKEN_URL,
+            data={
+                "grant_type":    "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id":     CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                LOGERR(f"Token refresh HTTP {resp.status}: {body[:200]}")
+                return False
+            raw = await resp.json(content_type=None)
+
+        data        = raw.get("data", raw) if isinstance(raw.get("data"), dict) else raw
+        new_token   = data.get("access_token", "")
+        new_refresh = data.get("refresh_token", refresh_token)
+        expires_in  = int(data.get("expires_in", 3600))
+
+        if not new_token:
+            LOGERR("Token refresh: empty access_token in response")
+            return False
+
+        plugin_cfg["access_token"]  = new_token
+        plugin_cfg["refresh_token"] = new_refresh
+        plugin_cfg["expires_at"]    = int(time.time()) + expires_in
+        save_plugin_config(plugin_cfg)
+        LOGOK(f"Token refreshed — valid for {expires_in}s")
+        return True
+
+    except Exception as e:
+        LOGERR(f"Token refresh error: {e}")
+        return False
+
+
 async def task_token_refresh(
     plugin_cfg: dict,
     session: aiohttp.ClientSession,
@@ -401,54 +446,15 @@ async def task_token_refresh(
             continue
 
         LOGINF("Token expiring soon — refreshing")
-        refresh_token = plugin_cfg.get("refresh_token", "")
-        if not refresh_token:
-            LOGERR("No refresh_token available — cannot refresh")
-            continue
-
-        try:
-            async with session.post(
-                TOKEN_URL,
-                data={
-                    "grant_type":    "refresh_token",
-                    "refresh_token": refresh_token,
-                    "client_id":     CLIENT_ID,
-                    "client_secret": CLIENT_SECRET,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            ) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    LOGERR(f"Token refresh HTTP {resp.status}: {body[:200]}")
-                    continue
-                raw  = await resp.json(content_type=None)
-
-            # API may wrap tokens inside a 'data' key
-            data        = raw.get("data", raw) if isinstance(raw.get("data"), dict) else raw
-            new_token   = data.get("access_token", "")
-            new_refresh = data.get("refresh_token", refresh_token)
-            expires_in  = int(data.get("expires_in", 3600))
-
-            if not new_token:
-                LOGERR("Token refresh: empty access_token in response")
-                continue
-
-            plugin_cfg["access_token"]  = new_token
-            plugin_cfg["refresh_token"] = new_refresh
-            plugin_cfg["expires_at"]    = int(time.time()) + expires_in
-            save_plugin_config(plugin_cfg)
-
+        ok = await _do_token_refresh(plugin_cfg, session)
+        if ok:
+            new_token = plugin_cfg["access_token"]
             if sdk:
                 sdk.update_mqtt_credentials(
                     auth_headers={"Authorization": f"Bearer {new_token}"}
                 )
             if api:
                 api.set_token(new_token)
-
-            LOGOK(f"Token refreshed — valid for {expires_in}s")
-
-        except Exception as e:
-            LOGERR(f"Token refresh error: {e}")
 
 
 # ── Task 10: REST Fallback ────────────────────────────────────────────────────
@@ -541,6 +547,13 @@ async def main() -> None:
         LOGWARN("No access token configured — gateway will wait for authentication")
 
     async with aiohttp.ClientSession() as session:
+        # Refresh token immediately at startup if expired or expiring within 60s
+        if plugin_cfg.get("access_token"):
+            expires_at = plugin_cfg.get("expires_at", 0)
+            if time.time() >= expires_at - 60:
+                LOGINF("Token expired at startup — attempting immediate refresh")
+                await _do_token_refresh(plugin_cfg, session)
+
         api, mqtt_info = await rest_init(plugin_cfg, session)
 
         navimow_sdk = None
