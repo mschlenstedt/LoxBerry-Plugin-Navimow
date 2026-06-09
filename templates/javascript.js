@@ -1,25 +1,46 @@
 <script>
+const _GW_STYLE = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;font-weight:500;display:flex;align-items:center;';
+let _currentGwPid = null;
+
 function updateGatewayStatus() {
     fetch('ajax.cgi?action=getpid')
         .then(r => r.json())
         .then(data => {
+            _currentGwPid = data.pid || null;
             const el = document.getElementById('gw_status_text');
             if (!el) return;
             if (data.pid) {
                 el.textContent = '<TMPL_VAR "GATEWAY.RUNNING"> (PID ' + data.pid + ')';
-                el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#6dac20;color:black;font-weight:500;display:flex;align-items:center;';
+                el.style.cssText = _GW_STYLE + 'background:#6dac20;color:black;';
             } else {
                 el.textContent = '<TMPL_VAR "GATEWAY.NOT_RUNNING">';
-                el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#d0021b;color:white;font-weight:500;display:flex;align-items:center;';
+                el.style.cssText = _GW_STYLE + 'background:#d0021b;color:white;';
             }
         })
         .catch(() => {
+            _currentGwPid = null;
             const el = document.getElementById('gw_status_text');
             if (el) {
                 el.textContent = '<TMPL_VAR "GATEWAY.NOT_RUNNING">';
-                el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#d0021b;color:white;font-weight:500;display:flex;align-items:center;';
+                el.style.cssText = _GW_STYLE + 'background:#d0021b;color:white;';
             }
         });
+}
+
+function _pollNewPid(oldPid) {
+    let attempts = 0;
+    const poll = setInterval(() => {
+        fetch('ajax.cgi?action=getpid')
+            .then(r => r.json())
+            .then(data => {
+                attempts++;
+                if ((data.pid && data.pid !== oldPid) || attempts >= 15) {
+                    clearInterval(poll);
+                    updateGatewayStatus();
+                }
+            })
+            .catch(() => { if (++attempts >= 15) { clearInterval(poll); updateGatewayStatus(); } });
+    }, 1000);
 }
 
 function updateTokenStatus() {
@@ -54,22 +75,33 @@ const btnRestart = document.getElementById('btn_restart');
 if (btnRestart) {
     btnRestart.addEventListener('click', function(e) {
         e.preventDefault();
-        this.classList.add('lb-btn-loading');
+        const btn = this;
+        const oldPid = _currentGwPid;
+
+        // Gray "restarting" banner immediately
+        const el = document.getElementById('gw_status_text');
+        if (el) {
+            el.textContent = '<TMPL_VAR "GATEWAY.RESTARTING">';
+            el.style.cssText = _GW_STYLE + 'background:#9e9e9e;color:white;';
+        }
+        btn.classList.add('lb-btn-loading');
+
         fetch('ajax.cgi?action=restart')
             .then(r => r.json())
             .then(data => {
-                btnRestart.classList.remove('lb-btn-loading');
+                btn.classList.remove('lb-btn-loading');
                 if (data && !data.ok && data.error) {
-                    const el = document.getElementById('gw_status_text');
                     if (el) {
                         el.textContent = 'Fehler: ' + data.error;
-                        el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#f5a623;color:black;font-weight:500;display:flex;align-items:center;';
+                        el.style.cssText = _GW_STYLE + 'background:#f5a623;color:black;';
                     }
+                } else if (data.pid && data.pid !== oldPid) {
+                    updateGatewayStatus();
                 } else {
-                    setTimeout(updateGatewayStatus, 1000);
+                    _pollNewPid(oldPid);
                 }
             })
-            .catch(() => btnRestart.classList.remove('lb-btn-loading'));
+            .catch(() => { btn.classList.remove('lb-btn-loading'); updateGatewayStatus(); });
     });
 }
 
