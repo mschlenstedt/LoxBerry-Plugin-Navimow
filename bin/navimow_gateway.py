@@ -413,77 +413,76 @@ async def task_mqtt_to_navimow(
                 await lbmqtt.subscribe(f"{base_topic}/+/set/blade_height")
                 LOGINF(f"Subscribed to {base_topic}/+/set[/blade_height]")
 
-                async with lbmqtt.messages() as messages:
-                    async for message in messages:
-                        if shutdown.is_set():
-                            break
-                        topic_parts = str(message.topic).split("/")
-                        if len(topic_parts) < 3:
-                            continue
-                        is_blade = topic_parts[-1] == "blade_height"
-                        device_id = topic_parts[-3] if is_blade else topic_parts[-2]
-                        payload = message.payload.decode("utf-8", errors="replace").strip()
+                async for message in lbmqtt.messages:
+                    if shutdown.is_set():
+                        break
+                    topic_parts = str(message.topic).split("/")
+                    if len(topic_parts) < 3:
+                        continue
+                    is_blade = topic_parts[-1] == "blade_height"
+                    device_id = topic_parts[-3] if is_blade else topic_parts[-2]
+                    payload = message.payload.decode("utf-8", errors="replace").strip()
 
-                        if is_blade:
-                            try:
-                                height = int(payload)
-                                if 1 <= height <= 7:
-                                    sdk.set_blade_height(device_id, height)
-                                    LOGOK(f"set_blade_height({device_id}, {height})")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", True)
-                                else:
-                                    LOGWARN(f"blade_height out of range: {payload}")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
-                            except ValueError:
-                                LOGWARN(f"Invalid blade_height payload: {payload}")
+                    if is_blade:
+                        try:
+                            height = int(payload)
+                            if 1 <= height <= 7:
+                                sdk.set_blade_height(device_id, height)
+                                LOGOK(f"set_blade_height({device_id}, {height})")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", True)
+                            else:
+                                LOGWARN(f"blade_height out of range: {payload}")
                                 await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
+                        except ValueError:
+                            LOGWARN(f"Invalid blade_height payload: {payload}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
+                        except MowerAPIError as e:
+                            reason = e.error_code or "unknown"
+                            LOGERR(f"set_blade_height({device_id}) failed: {e}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, reason)
+                        except Exception as e:
+                            LOGERR(f"set_blade_height({device_id}) failed: {e}")
+                            await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
+                    else:
+                        cmd = payload.lower()
+                        if cmd == "start":
+                            try:
+                                sdk.start_mowing(device_id)
+                                LOGOK(f"start_mowing({device_id})")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "start", True)
                             except MowerAPIError as e:
                                 reason = e.error_code or "unknown"
-                                LOGERR(f"set_blade_height({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, reason)
+                                LOGERR(f"start_mowing({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "start", False, reason)
                             except Exception as e:
-                                LOGERR(f"set_blade_height({device_id}) failed: {e}")
-                                await _publish_command_result(lbmqtt, base_topic, device_id, "blade_height", False, "unknown")
+                                LOGERR(f"start_mowing({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "start", False, "unknown")
+                        elif cmd == "pause":
+                            try:
+                                sdk.pause(device_id)
+                                LOGOK(f"pause({device_id})")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "pause", True)
+                            except MowerAPIError as e:
+                                reason = e.error_code or "unknown"
+                                LOGERR(f"pause({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, reason)
+                            except Exception as e:
+                                LOGERR(f"pause({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, "unknown")
+                        elif cmd in ("dock", "return", "home"):
+                            try:
+                                sdk.return_to_base(device_id)
+                                LOGOK(f"return_to_base({device_id})")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "dock", True)
+                            except MowerAPIError as e:
+                                reason = e.error_code or "unknown"
+                                LOGERR(f"return_to_base({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, reason)
+                            except Exception as e:
+                                LOGERR(f"return_to_base({device_id}) failed: {e}")
+                                await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, "unknown")
                         else:
-                            cmd = payload.lower()
-                            if cmd == "start":
-                                try:
-                                    sdk.start_mowing(device_id)
-                                    LOGOK(f"start_mowing({device_id})")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "start", True)
-                                except MowerAPIError as e:
-                                    reason = e.error_code or "unknown"
-                                    LOGERR(f"start_mowing({device_id}) failed: {e}")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "start", False, reason)
-                                except Exception as e:
-                                    LOGERR(f"start_mowing({device_id}) failed: {e}")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "start", False, "unknown")
-                            elif cmd == "pause":
-                                try:
-                                    sdk.pause(device_id)
-                                    LOGOK(f"pause({device_id})")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "pause", True)
-                                except MowerAPIError as e:
-                                    reason = e.error_code or "unknown"
-                                    LOGERR(f"pause({device_id}) failed: {e}")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, reason)
-                                except Exception as e:
-                                    LOGERR(f"pause({device_id}) failed: {e}")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, "unknown")
-                            elif cmd in ("dock", "return", "home"):
-                                try:
-                                    sdk.return_to_base(device_id)
-                                    LOGOK(f"return_to_base({device_id})")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "dock", True)
-                                except MowerAPIError as e:
-                                    reason = e.error_code or "unknown"
-                                    LOGERR(f"return_to_base({device_id}) failed: {e}")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, reason)
-                                except Exception as e:
-                                    LOGERR(f"return_to_base({device_id}) failed: {e}")
-                                    await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, "unknown")
-                            else:
-                                LOGWARN(f"Unknown command: {payload}")
+                            LOGWARN(f"Unknown command: {payload}")
 
         except Exception as e:
             if not shutdown.is_set():

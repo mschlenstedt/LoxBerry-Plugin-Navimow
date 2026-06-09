@@ -13,11 +13,11 @@ echo "<INFO> Navimow: installing Python dependencies as root..."
 
 pip3 install --quiet \
     "navimow-sdk>=0.1.2,<0.2" \
-    aiomqtt \
+    "aiomqtt>=2.0,<3.0" \
     aiohttp 2>/dev/null \
 || pip3 install --break-system-packages --quiet \
     "navimow-sdk>=0.1.2,<0.2" \
-    aiomqtt \
+    "aiomqtt>=2.0,<3.0" \
     aiohttp
 
 if [ $? -ne 0 ]; then
