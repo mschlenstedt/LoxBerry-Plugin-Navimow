@@ -56,10 +56,12 @@
           <span id="token_expires">--</span>
         </div>
       </div>
-      <a id="btn_authenticate" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"
-         class="lb-btn lb-btn-primary" style="margin-top:0.75rem;">
-        <TMPL_VAR "TOKEN.BTN_AUTHENTICATE">
-      </a>
+      <div style="margin-top:0.75rem; text-align:center;">
+        <a id="btn_authenticate" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"
+           class="lb-btn lb-btn-primary">
+          <TMPL_VAR "TOKEN.BTN_AUTHENTICATE">
+        </a>
+      </div>
     </div>
   </div>
 
@@ -97,7 +99,7 @@
           <span id="sdk_available">--</span>
         </div>
       </div>
-      <div style="margin-top:0.75rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+      <div style="margin-top:0.75rem; display:flex; align-items:center; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
         <button id="btn_sdk_update" type="button" class="lb-btn lb-btn-sm"
                 style="background:#6dac20; border-color:#5a9118; color:#fff;">
           <TMPL_VAR "SDK.BTN_UPDATE">
