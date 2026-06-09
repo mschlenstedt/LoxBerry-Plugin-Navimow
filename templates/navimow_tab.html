@@ -1,3 +1,10 @@
+<TMPL_IF OAUTH_OK>
+<div class="lb-alert lb-alert-success"><TMPL_VAR "OAUTH.SUCCESS"></div>
+</TMPL_IF>
+<TMPL_IF OAUTH_ERROR>
+<div class="lb-alert lb-alert-danger"><TMPL_VAR "OAUTH.ERROR">: <TMPL_VAR OAUTH_ERROR></div>
+</TMPL_IF>
+
 <!-- Gateway Status Panel -->
 <div class="servicestatus" id="gw_status_panel">
   <div class="servicestatus-info">
@@ -6,41 +13,41 @@
   </div>
   <div class="servicestatus-btns">
     <a id="btn_restart" href="#" class="lb-btn lb-btn-sm">
-      <i class="lb-icon lb-icon-refresh"></i> <?= $L['GATEWAY_RESTART'] ?>
+      <i class="lb-icon lb-icon-refresh"></i> <TMPL_VAR "GATEWAY.RESTART">
     </a>
     <a id="btn_stop" href="#" class="lb-btn lb-btn-sm lb-btn-danger">
-      <i class="lb-icon lb-icon-stop"></i> <?= $L['GATEWAY_STOP'] ?>
+      <i class="lb-icon lb-icon-stop"></i> <TMPL_VAR "GATEWAY.STOP">
     </a>
   </div>
 </div>
 
 <!-- Token Status -->
 <div class="lb-card" style="margin-top:1.5rem;">
-  <div class="lb-card-header"><?= $L['TOKEN_HEADER'] ?></div>
+  <div class="lb-card-header"><TMPL_VAR "TOKEN.HEADER"></div>
   <div class="lb-card-body">
     <div class="lb-form-row">
-      <div class="lb-form-label"><?= $L['TOKEN_LABEL_STATUS'] ?></div>
+      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_STATUS"></div>
       <div class="lb-form-field">
-        <span id="token_badge" class="lb-badge lb-badge-danger"><?= $L['TOKEN_NOT_AUTHENTICATED'] ?></span>
+        <span id="token_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "TOKEN.NOT_AUTHENTICATED"></span>
       </div>
     </div>
     <div class="lb-form-row">
-      <div class="lb-form-label"><?= $L['TOKEN_LABEL_TOKEN'] ?></div>
+      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_TOKEN"></div>
       <div class="lb-form-field">
         <code id="token_value" style="word-break:break-all">--</code>
       </div>
     </div>
     <div class="lb-form-row">
-      <div class="lb-form-label"><?= $L['TOKEN_LABEL_EXPIRES'] ?></div>
+      <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_EXPIRES"></div>
       <div class="lb-form-field">
         <span id="token_expires">--</span>
       </div>
     </div>
     <div class="lb-form-row">
       <div class="lb-form-field">
-        <a id="btn_authenticate" href="<?= $oauth_authorize_url ?>"
+        <a id="btn_authenticate" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"
            class="lb-btn lb-btn-primary">
-          <?= $L['TOKEN_BTN_AUTHENTICATE'] ?>
+          <TMPL_VAR "TOKEN.BTN_AUTHENTICATE">
         </a>
       </div>
     </div>
@@ -49,17 +56,17 @@
 
 <!-- Devices -->
 <div class="lb-card" style="margin-top:1rem;">
-  <div class="lb-card-header"><?= $L['DEVICES_HEADER'] ?></div>
+  <div class="lb-card-header"><TMPL_VAR "DEVICES.HEADER"></div>
   <div class="lb-card-body" id="devices_list">
-    <?php if (empty($plugincfg['devices'])): ?>
-      <p><?= $L['DEVICES_NO_DEVICES'] ?></p>
-    <?php else: ?>
+    <TMPL_IF HAS_DEVICES>
       <ul class="lb-list">
-        <?php foreach ($plugincfg['devices'] as $dev): ?>
-          <li><?= htmlspecialchars($dev['name']) ?> <small>(<?= htmlspecialchars($dev['device_id']) ?>)</small></li>
-        <?php endforeach; ?>
+        <TMPL_LOOP DEVICES>
+          <li><TMPL_VAR DEVICE_NAME> <small>(<TMPL_VAR DEVICE_ID>)</small></li>
+        </TMPL_LOOP>
       </ul>
-    <?php endif; ?>
+    <TMPL_ELSE>
+      <p><TMPL_VAR "DEVICES.NO_DEVICES"></p>
+    </TMPL_IF>
   </div>
 </div>
 
