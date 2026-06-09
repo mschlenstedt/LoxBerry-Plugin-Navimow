@@ -13,7 +13,13 @@ function updateGatewayStatus() {
                 el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#d0021b;color:white;font-weight:500;display:flex;align-items:center;';
             }
         })
-        .catch(() => {});
+        .catch(() => {
+            const el = document.getElementById('gw_status_text');
+            if (el) {
+                el.textContent = '<TMPL_VAR "GATEWAY.NOT_RUNNING">';
+                el.style.cssText = 'flex:1;min-height:3rem;padding:0.5rem 1rem;border-radius:4px;background:#d0021b;color:white;font-weight:500;display:flex;align-items:center;';
+            }
+        });
 }
 
 function updateTokenStatus() {
@@ -24,17 +30,16 @@ function updateTokenStatus() {
             const val     = document.getElementById('token_value');
             const expires = document.getElementById('token_expires');
             if (!badge) return;
+            val.textContent = data.masked || '--';
             if (data.ok) {
                 badge.textContent = '<TMPL_VAR "TOKEN.AUTHENTICATED">';
                 badge.className   = 'lb-badge lb-badge-success';
-                val.textContent   = data.masked || '--';
                 const h = Math.floor(data.expires_in / 3600);
                 const m = Math.floor((data.expires_in % 3600) / 60);
                 expires.textContent = h + 'h ' + m + 'm';
             } else {
                 badge.textContent = '<TMPL_VAR "TOKEN.NOT_AUTHENTICATED">';
                 badge.className   = 'lb-badge lb-badge-danger';
-                val.textContent   = '--';
                 expires.textContent = '--';
             }
         })
