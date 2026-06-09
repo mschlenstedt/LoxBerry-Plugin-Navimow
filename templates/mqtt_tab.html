@@ -15,17 +15,16 @@
 </div>
 
 <div class="lb-section-title" style="margin-top:2rem;"><TMPL_VAR "MQTT.TOPIC_SCHEMA"></div>
-<p>MQTT broker connection settings are read from LoxBerry&rsquo;s <strong>general.json</strong>.</p>
 <table class="lb-table" style="font-family:monospace; font-size:0.9em;">
   <thead><tr><th>Topic</th><th>Direction</th><th>Description</th></tr></thead>
   <tbody>
-    <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/state</td>
+    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/state</td>
         <td>OUT</td><td>JSON: state, battery, error</td></tr>
-    <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/battery</td>
+    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/battery</td>
         <td>OUT</td><td>Integer 0&ndash;100</td></tr>
-    <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/set</td>
+    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set</td>
         <td>IN</td><td>start | pause | dock</td></tr>
-    <tr><td>&lt;base_topic&gt;/&lt;device_id&gt;/set/blade_height</td>
+    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set/blade_height</td>
         <td>IN</td><td>Integer 1&ndash;7</td></tr>
   </tbody>
 </table>

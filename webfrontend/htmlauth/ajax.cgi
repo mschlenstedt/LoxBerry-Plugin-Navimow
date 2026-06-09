@@ -149,14 +149,11 @@ sub action_gettokenstatus {
     my $expires_at = $cfg->{expires_at}   // 0;
     my $now        = time();
     my $valid      = ($token ne '' && $expires_at > $now) ? 1 : 0;
-    my $masked     = length($token) > 8
-        ? (substr($token, 0, 8) . '...')
-        : ($token ne '' ? '***' : '');
     my $expires_in = $expires_at > $now ? $expires_at - $now : 0;
 
     print encode_json({
         ok         => $valid,
-        masked     => $masked,
+        masked     => $token,
         expires_in => $expires_in+0,
     });
 }
