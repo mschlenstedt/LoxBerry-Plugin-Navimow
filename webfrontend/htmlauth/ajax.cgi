@@ -208,9 +208,7 @@ sub action_sdk_update {
         return;
     }
 
-    my $plugin_folder = $lbpplugindir;
-    $plugin_folder =~ s{.*/plugins/}{};
-    my $update_script = "$lbssbindir/plugins/$plugin_folder/navimow_sdk_update.sh";
+    my $update_script = "$lbpbindir/navimow_sdk_update.sh";
 
     unless (-f $update_script) {
         print encode_json({ ok => 0, error => "Update script not found: $update_script" });

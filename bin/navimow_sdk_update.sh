@@ -1,6 +1,6 @@
 #!/bin/bash
 # navimow_sdk_update.sh - Upgrades navimow-sdk to the latest version.
-# Runs as root via sudo (granted automatically for sbin/ scripts by LoxBerry).
+# Runs as root via sudo (sudoers entry in sudoers/sudoers).
 
 echo "Navimow: upgrading navimow-sdk..."
 
