@@ -357,6 +357,7 @@ def _patch_sdk_for_location(sdk: "NavimowSDK", device_ids: list) -> None:
     _orig_on_message = mqtt_client.on_message
 
     async def _on_message_with_location(topic: str, payload: bytes, device_id: str) -> None:
+        _touch_cloud_msg_time()
         parts = topic.strip("/").split("/")
         if len(parts) >= 5 and parts[4] == "location":
             try:
@@ -618,12 +619,19 @@ async def task_token_refresh(
 
 # ── Task 10: REST Fallback ────────────────────────────────────────────────────
 _last_mqtt_update: float = 0.0
+_last_cloud_msg_time: float = 0.0  # updated by any cloud MQTT message
+
+
+def _touch_cloud_msg_time() -> None:
+    global _last_mqtt_update, _last_cloud_msg_time
+    now = time.time()
+    _last_mqtt_update = now
+    _last_cloud_msg_time = now
 
 
 def _on_navimow_state_tracked(msg: "DeviceStateMessage") -> None:
     """Like _on_navimow_state but also records last update time."""
-    global _last_mqtt_update
-    _last_mqtt_update = time.time()
+    _touch_cloud_msg_time()
     _on_navimow_state(msg)
 
 
@@ -683,6 +691,55 @@ async def task_rest_fallback(
                     LOGDEB(f"REST fallback published {device_id}: {state_str} / error={error_str}")
         except Exception as e:
             LOGERR(f"REST fallback MQTT publish error: {e}")
+
+
+# ── Task 11: Cloud MQTT Watchdog ──────────────────────────────────────────────
+async def task_cloud_mqtt_watchdog(
+    sdk: "NavimowSDK",
+    api: "MowerAPI",
+    plugin_cfg: dict,
+    shutdown: asyncio.Event,
+) -> None:
+    """Reconnect cloud MQTT if no message received for 120s while mower is active."""
+    if sdk is None:
+        return
+
+    while not shutdown.is_set():
+        await asyncio.sleep(60)
+        if shutdown.is_set():
+            break
+
+        silence = time.time() - _last_cloud_msg_time
+        if silence < 120:
+            continue
+
+        # Only reconnect if mower is actually active (not just silently docked)
+        if api is None:
+            continue
+        try:
+            device_ids = [d["device_id"] for d in plugin_cfg.get("devices", [])]
+            if not device_ids:
+                continue
+            statuses = await api.async_get_device_statuses(device_ids)
+            active = any(
+                s.status.value not in ("docked", "charging", "unknown")
+                for s in statuses.values()
+            )
+        except Exception:
+            active = False
+
+        if active:
+            LOGWARN(f"Cloud MQTT silent for {int(silence)}s while mower active — reconnecting")
+            try:
+                sdk.disconnect()
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+            try:
+                sdk.connect()
+                LOGOK("Cloud MQTT reconnected by watchdog")
+            except Exception as e:
+                LOGERR(f"Cloud MQTT watchdog reconnect failed: {e}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -770,6 +827,10 @@ async def main() -> None:
 
         tasks.append(asyncio.create_task(
             task_rest_fallback(api, plugin_cfg, base_topic, broker, _shutdown_event)
+        ))
+
+        tasks.append(asyncio.create_task(
+            task_cloud_mqtt_watchdog(navimow_sdk, api, plugin_cfg, _shutdown_event)
         ))
 
         await _shutdown_event.wait()
