@@ -26,10 +26,6 @@ if ($action eq 'getpid') {
     action_stop();
 } elsif ($action eq 'gettokenstatus') {
     action_gettokenstatus();
-} elsif ($action eq 'sdk_versions') {
-    action_sdk_versions();
-} elsif ($action eq 'sdk_update') {
-    action_sdk_update();
 } else {
     print encode_json({ error => "Unknown action: $action" });
 }
@@ -184,74 +180,3 @@ sub action_gettokenstatus {
     });
 }
 
-sub action_sdk_versions {
-    my $installed = `python3 -c "import importlib.metadata; print(importlib.metadata.version('navimow-sdk'))" 2>/dev/null`;
-    chomp $installed;
-    $installed = 'unknown' unless $installed =~ /^\d/;
-
-    my $available = `python3 -c "import urllib.request, json; d=json.loads(urllib.request.urlopen('https://pypi.org/pypi/navimow-sdk/json', timeout=5).read().decode()); print(d['info']['version'])" 2>/dev/null`;
-    chomp $available;
-    $available = 'unknown' unless $available =~ /^\d/;
-
-    my $updating = (-f "$lbpconfigdir/sdk_updating") ? 1 : 0;
-
-    print encode_json({
-        installed => $installed,
-        available => $available,
-        updating  => $updating+0,
-    });
-}
-
-sub action_sdk_update {
-    if (-f "$lbpconfigdir/sdk_updating") {
-        print encode_json({ ok => 0, error => 'Update already running' });
-        return;
-    }
-
-    my $update_script = "$lbpbindir/navimow_sdk_update.sh";
-
-    unless (-f $update_script) {
-        print encode_json({ ok => 0, error => "Update script not found: $update_script" });
-        return;
-    }
-
-    { open my $fh, '>', "$lbpconfigdir/sdk_updating" }
-
-    my ($logfile, $logdbkey);
-    eval {
-        my $log = LoxBerry::Log->new(
-            name    => 'sdk_update',
-            package => $lbpplugindir,
-            addtime => 1,
-        );
-        $log->LOGSTART("Navimow SDK update");
-        $logfile  = $log->{filename};
-        $logdbkey = $log->{dbkey} // 0;
-    };
-    $logfile //= "$lbplogdir/navimow_sdk_update.log";
-
-    my $flag  = "$lbpconfigdir/sdk_updating";
-    my $child = fork();
-    if (!defined $child) {
-        unlink $flag;
-        print encode_json({ ok => 0, error => "fork failed: $!" });
-        return;
-    }
-    if ($child == 0) {
-        my $gc = fork();
-        if (!defined $gc) { exit 1; }
-        if ($gc == 0) {
-            setsid();
-            open(STDIN,  '<', '/dev/null');
-            open(STDOUT, '>>', $logfile) or open(STDOUT, '>', '/dev/null');
-            open(STDERR, '>>', $logfile) or open(STDERR, '>', '/dev/null');
-            my $rc = system('sudo', $update_script);
-            unlink $flag;
-            exit($rc == 0 ? 0 : 1);
-        }
-        exit 0;
-    }
-    waitpid($child, 0);
-
-    print encode_json({ ok => 1, updating => 1 });
-}

@@ -13,13 +13,11 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 import aiohttp
-from mower_sdk.api import MowerAPI
+import paho.mqtt.client as _paho
 import aiomqtt
-from mower_sdk.sdk import NavimowSDK
-from mower_sdk.models import DeviceStateMessage, DeviceAttributesMessage, MowerCommand
-from mower_sdk.errors import MowerAPIError
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
 _ap = argparse.ArgumentParser(add_help=False)
@@ -31,12 +29,12 @@ _ap.add_argument("--loglevel",  type=int, default=6)
 _args, _ = _ap.parse_known_args()
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-LBHOMEDIR   = os.environ.get("LBHOMEDIR", "/opt/loxberry")
-LBSCONFIG   = Path(_args.lbsconfig)
-CONFIGDIR   = Path(_args.configdir) if _args.configdir else Path(LBHOMEDIR) / "config/plugins/navimow"
+LBHOMEDIR    = os.environ.get("LBHOMEDIR", "/opt/loxberry")
+LBSCONFIG    = Path(_args.lbsconfig)
+CONFIGDIR    = Path(_args.configdir) if _args.configdir else Path(LBHOMEDIR) / "config/plugins/navimow"
 GENERAL_JSON = LBSCONFIG / "general.json"
-PLUGIN_CFG  = CONFIGDIR / "pluginconfig.json"
-PID_FILE    = Path("/dev/shm/navimow_gateway.pid")
+PLUGIN_CFG   = CONFIGDIR / "pluginconfig.json"
+PID_FILE     = Path("/dev/shm/navimow_gateway.pid")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 _loglevel = _args.loglevel
@@ -81,7 +79,7 @@ def _logend() -> None:
     if not dbkey:
         return
     if not re.match(r'^[\w]+$', dbkey):
-        LOGWARN(f"_logend: invalid dbkey value, skipping LOGEND call")
+        LOGWARN("_logend: invalid dbkey value, skipping LOGEND call")
         return
     os.system(
         f'perl -e \'use LoxBerry::Log; '
@@ -117,12 +115,12 @@ def load_general_config() -> dict:
 
 def load_plugin_config() -> dict:
     cfg = _load_json(PLUGIN_CFG)
-    cfg.setdefault("base_topic", "navimow")
-    cfg.setdefault("access_token", "")
-    cfg.setdefault("refresh_token", "")
-    cfg.setdefault("expires_at", 0)
-    cfg.setdefault("token_type", "Bearer")
-    cfg.setdefault("devices", [])
+    cfg.setdefault("base_topic",     "navimow")
+    cfg.setdefault("access_token",   "")
+    cfg.setdefault("refresh_token",  "")
+    cfg.setdefault("expires_at",     0)
+    cfg.setdefault("token_type",     "Bearer")
+    cfg.setdefault("devices",        [])
     return cfg
 
 
@@ -134,7 +132,7 @@ def _is_enabled(val) -> bool:
     return str(val).strip().lower() in ("true", "1", "yes", "on")
 
 
-def _str_or_none(val) -> "str | None":
+def _str_or_none(val):
     if val is None:
         return None
     s = str(val).strip()
@@ -143,46 +141,29 @@ def _str_or_none(val) -> "str | None":
 
 def get_mqtt_broker_config(general: dict) -> dict:
     mqtt = general.get("Mqtt", {})
-
     host     = mqtt.get("Brokerhost", "localhost")
     port     = int(mqtt.get("Brokerport", 1883))
     username = _str_or_none(mqtt.get("Brokeruser"))
     password = _str_or_none(mqtt.get("Brokerpass"))
-
     use_local = _is_enabled(mqtt.get("Uselocalbroker", "true"))
-    tls = False
-    tls_verify = False
+    tls = tls_verify = False
     tls_cafile = None
-
     if use_local and _is_enabled(mqtt.get("Tlsenabled", "false")):
         tls       = True
-        tls_verify = False
         tls_cafile = "/etc/mosquitto/tls/ca.crt"
         port       = int(mqtt.get("Tlsport", 8883))
     elif not use_local and _is_enabled(mqtt.get("TlsExternalEnabled", "false")):
         tls        = True
         tls_verify = _is_enabled(mqtt.get("TlsExternalValidatecert", "false"))
-        tls_cafile = None
-
-    return {
-        "host":       host,
-        "port":       port,
-        "username":   username,
-        "password":   password,
-        "tls":        tls,
-        "tls_verify": tls_verify,
-        "tls_cafile": tls_cafile,
-    }
+    return {"host": host, "port": port, "username": username, "password": password,
+            "tls": tls, "tls_verify": tls_verify, "tls_cafile": tls_cafile}
 
 
 def _build_mqtt_kwargs(broker: dict) -> dict:
-    kwargs: dict = {
-        "hostname": broker["host"],
-        "port":     broker["port"],
-    }
-    if broker["username"] is not None and broker["username"] != "":
+    kwargs: dict = {"hostname": broker["host"], "port": broker["port"]}
+    if broker["username"]:
         kwargs["username"] = broker["username"]
-    if broker["password"] is not None and broker["password"] != "":
+    if broker["password"]:
         kwargs["password"] = broker["password"]
     if broker.get("tls"):
         ctx = ssl.create_default_context()
@@ -220,9 +201,7 @@ def _handle_sigterm(*_) -> None:
 
 
 # ── Vehicle state normalisation ───────────────────────────────────────────────
-# Maps raw strings from the cloud (isRunning, isDocked, …) to clean text.
-# Source: TA2k/ioBroker.navimow lib/states.json — carried verbatim including typos.
-_VEHICLE_STATE_TEXT_MAP: dict[str, str] = {
+_VEHICLE_STATE_TEXT_MAP: dict = {
     "isRunning":         "mowing",
     "isPaused":          "paused",
     "isDocked":          "docked",
@@ -238,7 +217,6 @@ _VEHICLE_STATE_TEXT_MAP: dict[str, str] = {
     "error":             "error",
     "Offline":           "offline",
     "offline":           "offline",
-    # lowercase normalized (SDK or newer firmware)
     "mowing":            "mowing",
     "paused":            "paused",
     "docked":            "docked",
@@ -251,7 +229,7 @@ _VEHICLE_STATE_TEXT_MAP: dict[str, str] = {
     "offline":           "offline",
 }
 
-_STATE_CODES: dict[str, int] = {
+_STATE_CODES: dict = {
     "idle":       0,
     "mowing":     1,
     "paused":     2,
@@ -266,44 +244,15 @@ _STATE_CODES: dict[str, int] = {
     "unknown":   99,
 }
 
-_ERROR_CODES: dict[str, int] = {
-    "none":         0,
-    "stuck":        1,
-    "lifted":       2,
-    "rain":         3,
-    "battery_low":  4,
-    "sensor_error": 5,
-    "motor_error":  6,
-    "blade_error":  7,
-    "unknown":      99,
-}
-
-
-def _normalize_error(error) -> str:
-    if error is None:
-        return "none"
-    if isinstance(error, str):
-        return error
-    if isinstance(error, dict):
-        for key in ("type", "errorCode", "code", "error"):
-            val = error.get(key)
-            if isinstance(val, str) and val:
-                return val.lower()
-        LOGWARN(f"Unknown error dict structure from cloud: {error}")
-        return "unknown"
-    return "unknown"
-
 
 def _normalize_vehicle_state(raw: str) -> tuple:
-    """Map raw vehicleState string (isRunning etc.) → (text, code)."""
     text = _VEHICLE_STATE_TEXT_MAP.get(str(raw).strip(), "unknown")
     return text, _STATE_CODES.get(text, 99)
 
 
-# ── REST constants ────────────────────────────────────────────────────────────
+# ── REST constants & helpers ──────────────────────────────────────────────────
 API_BASE  = "https://navimow-fra.ninebot.com"
-TOKEN_URL = "https://navimow-fra.ninebot.com/openapi/oauth/getAccessToken"
-
+TOKEN_URL = f"{API_BASE}/openapi/oauth/getAccessToken"
 CLIENT_ID     = "homeassistant"
 CLIENT_SECRET = "57056e15-722e-42be-bbaa-b0cbfb208a52"
 
@@ -316,16 +265,11 @@ def _rest_headers(token: str) -> dict:
     }
 
 
-async def _rest_get_auth_list(
-    session: aiohttp.ClientSession,
-    token: str,
-) -> list:
-    """GET /openapi/smarthome/authList → raw device list (name, model, firmware…)."""
+async def _rest_get_auth_list(session: aiohttp.ClientSession, token: str) -> list:
+    """GET /openapi/smarthome/authList → device list with name, model, firmware."""
     try:
-        async with session.get(
-            f"{API_BASE}/openapi/smarthome/authList",
-            headers=_rest_headers(token),
-        ) as resp:
+        async with session.get(f"{API_BASE}/openapi/smarthome/authList",
+                               headers=_rest_headers(token)) as resp:
             data = await resp.json(content_type=None)
         if not isinstance(data, dict) or data.get("code") != 1:
             LOGWARN(f"authList failed: {data.get('desc') if isinstance(data, dict) else data}")
@@ -336,12 +280,24 @@ async def _rest_get_auth_list(
         return []
 
 
-async def _rest_get_vehicle_status(
-    session: aiohttp.ClientSession,
-    token: str,
-    device_ids: list,
-) -> list:
-    """POST /openapi/smarthome/getVehicleStatus → raw device list with full status."""
+async def _rest_get_mqtt_info(session: aiohttp.ClientSession, token: str) -> dict:
+    """GET /openapi/mqtt/userInfo/get/v2 → mqttUrl, mqttHost, userName, pwdInfo."""
+    try:
+        async with session.get(f"{API_BASE}/openapi/mqtt/userInfo/get/v2",
+                               headers=_rest_headers(token)) as resp:
+            data = await resp.json(content_type=None)
+        if not isinstance(data, dict) or data.get("code") != 1:
+            LOGWARN(f"MQTT userInfo failed: {data.get('desc') if isinstance(data, dict) else data}")
+            return {}
+        return data.get("data") or {}
+    except Exception as e:
+        LOGERR(f"MQTT userInfo error: {e}")
+        return {}
+
+
+async def _rest_get_vehicle_status(session: aiohttp.ClientSession, token: str,
+                                   device_ids: list) -> list:
+    """POST /openapi/smarthome/getVehicleStatus → raw device list."""
     try:
         async with session.post(
             f"{API_BASE}/openapi/smarthome/getVehicleStatus",
@@ -358,11 +314,56 @@ async def _rest_get_vehicle_status(
         return []
 
 
+# Command map verified against TA2k/ioBroker.navimow main.js
+_COMMAND_MAP: dict = {
+    "start":  ("action.devices.commands.StartStop",    {"on": True}),
+    "stop":   ("action.devices.commands.StartStop",    {"on": False}),
+    "pause":  ("action.devices.commands.PauseUnpause", {"on": False}),
+    "resume": ("action.devices.commands.PauseUnpause", {"on": True}),
+    "dock":   ("action.devices.commands.Dock",          None),
+}
+_COMMAND_ALIASES: dict = {
+    "mow": "start", "go": "start", "run": "start",
+    "home": "dock", "return": "dock",
+}
+
+
+async def _rest_send_command(session: aiohttp.ClientSession, token: str,
+                             device_id: str, command: str) -> tuple:
+    """POST /openapi/smarthome/sendCommands. Returns (ok, reason)."""
+    canonical = _COMMAND_ALIASES.get(command, command)
+    if canonical not in _COMMAND_MAP:
+        return False, f"unknown command: {command}"
+    cmd_str, params = _COMMAND_MAP[canonical]
+    execution: dict = {"command": cmd_str}
+    if params is not None:
+        execution["params"] = params
+    body = {"commands": [{"devices": [{"id": device_id}], "execution": execution}]}
+    try:
+        async with session.post(
+            f"{API_BASE}/openapi/smarthome/sendCommands",
+            headers=_rest_headers(token),
+            json=body,
+        ) as resp:
+            if resp.status == 401:
+                return False, "401 unauthorized"
+            data = await resp.json(content_type=None)
+        if not isinstance(data, dict) or data.get("code") != 1:
+            return False, str(data.get("desc") if isinstance(data, dict) else data)
+        results = (((data.get("data") or {}).get("payload") or {}).get("commands")) or []
+        for r in results:
+            if (isinstance(r, dict) and r.get("status") == "ERROR"
+                    and r.get("errorCode") != "alreadyInState"):
+                return False, r.get("errorCode") or "error"
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
+
+
 def _extract_vehicle_status_fields(dev: dict) -> dict:
-    """Extract all useful fields from a raw getVehicleStatus device entry."""
+    """Extract all useful fields from a raw getVehicleStatus / MQTT state payload."""
     fields: dict = {}
 
-    # vehicleState_desc + state_code (only from string state, never from numeric)
     for key in ("vehicleState", "state", "status"):
         raw = dev.get(key)
         if raw not in (None, "") and not str(raw).lstrip("-").isdigit():
@@ -371,7 +372,6 @@ def _extract_vehicle_status_fields(dev: dict) -> dict:
             fields["state_code"] = code
             break
 
-    # Battery percent — capacityRemaining is [{rawValue, unit}]
     cap = dev.get("capacityRemaining")
     bat_val = None
     if isinstance(cap, list) and cap:
@@ -388,12 +388,10 @@ def _extract_vehicle_status_fields(dev: dict) -> dict:
     except (TypeError, ValueError):
         pass
 
-    # Battery description
     desc = dev.get("descriptiveCapacityRemaining") or dev.get("battery_desc")
     if desc:
         fields["battery_desc"] = str(desc)
 
-    # Signal strength
     sig = dev.get("signalStrength") or dev.get("signal_strength")
     if sig is not None:
         try:
@@ -401,16 +399,13 @@ def _extract_vehicle_status_fields(dev: dict) -> dict:
         except (TypeError, ValueError):
             pass
 
-    # Error
     err = dev.get("errorCode") or dev.get("error_code")
     if err not in (None, "", "none"):
         fields["error_code"] = str(err)
 
-    # Action
     if dev.get("action") is not None:
         fields["action"] = dev["action"]
 
-    # Mow statistics
     for key in ("mowingWeekArea", "subtotalArea", "currentMowProgress",
                 "currentMowBoundary", "mowStartType", "mapWorkPosition"):
         if dev.get(key) is not None:
@@ -419,47 +414,11 @@ def _extract_vehicle_status_fields(dev: dict) -> dict:
     return {k: v for k, v in fields.items() if v is not None}
 
 
-# ── Task 6: REST Initialization ───────────────────────────────────────────────
-async def rest_init(
-    plugin_cfg: dict,
-    session: aiohttp.ClientSession,
-) -> tuple:
-    """Fetch device list and Navimow MQTT credentials via REST."""
-    token = plugin_cfg.get("access_token", "")
-    if not token:
-        LOGWARN("No access token — skipping REST init")
-        return None, {}
-
-    api = MowerAPI(session=session, token=token, base_url=API_BASE)
-
-    try:
-        devices = await api.async_get_devices()
-        LOGOK(f"Found {len(devices)} device(s) on account")
-        plugin_cfg["devices"] = [
-            {"device_id": d.id, "name": d.name}
-            for d in devices
-        ]
-        save_plugin_config(plugin_cfg)
-    except Exception as e:
-        LOGERR(f"REST get_devices failed: {e}")
-
-    try:
-        mqtt_info = await api.async_get_mqtt_user_info()
-        LOGINF(f"Navimow MQTT host: {mqtt_info.get('mqttHost', '?')}")
-    except Exception as e:
-        LOGERR(f"REST get_mqtt_user_info failed: {e}")
-        mqtt_info = {}
-
-    return api, mqtt_info
-
-
 # ── Shared device state ───────────────────────────────────────────────────────
-# All sources (SDK callbacks, location channel, REST poll) merge into this dict.
-# task_navimow_to_mqtt watches _state_publish_queue and publishes on signal.
-_device_state: dict = {}                                  # device_id → state dict
-_state_publish_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
-_location_queue:      asyncio.Queue = asyncio.Queue(maxsize=64)
-_event_queue:         asyncio.Queue = asyncio.Queue(maxsize=64)
+_device_state:        dict           = {}
+_state_publish_queue: asyncio.Queue  = asyncio.Queue(maxsize=64)
+_location_queue:      asyncio.Queue  = asyncio.Queue(maxsize=64)
+_event_queue:         asyncio.Queue  = asyncio.Queue(maxsize=64)
 
 _last_cloud_msg_time: float = 0.0
 _last_activity:       float = 0.0
@@ -467,7 +426,6 @@ _activity_refresh_due: bool = False
 
 
 def _update_state(device_id: str, updates: dict) -> None:
-    """Merge updates into device state cache and signal publish."""
     if device_id not in _device_state:
         _device_state[device_id] = {}
     _device_state[device_id].update(
@@ -484,155 +442,237 @@ def _touch_cloud_msg_time() -> None:
     _last_cloud_msg_time = time.time()
 
 
-# ── SDK callbacks ─────────────────────────────────────────────────────────────
-def _on_navimow_state_tracked(msg: "DeviceStateMessage") -> None:
+# ── Cloud MQTT message handler ────────────────────────────────────────────────
+def _on_cloud_message(device_id: str, channel: str, payload: bytes) -> None:
+    """Synchronous handler — scheduled into the asyncio loop via call_soon_threadsafe."""
+    global _activity_refresh_due, _last_activity
     _touch_cloud_msg_time()
-    raw_state = msg.state or "unknown"
-    text = _VEHICLE_STATE_TEXT_MAP.get(raw_state, raw_state)
-    if text not in _STATE_CODES:
-        text = "unknown"
-    updates: dict = {
-        "vehicleState_desc": text,
-        "state_code":        _STATE_CODES.get(text, 99),
-    }
-    if msg.battery is not None:
-        updates["battery"] = msg.battery
-    if msg.signal_strength is not None:
-        updates["signal"] = msg.signal_strength
-    err = _normalize_error(msg.error)
-    if err != "none":
-        updates["error_code"] = err
-    _update_state(msg.device_id, updates)
+
+    now = time.time()
+    if (now - _last_activity) > 30:
+        _activity_refresh_due = True
+    _last_activity = now
+
+    if channel in ("state", "attributes"):
+        try:
+            raw = json.loads(payload.decode("utf-8", "replace"))
+            if isinstance(raw, list) and raw:
+                raw = raw[-1]
+            if isinstance(raw, dict) and raw:
+                fields = _extract_vehicle_status_fields(raw)
+                if fields:
+                    _update_state(device_id, fields)
+                    LOGDEB(f"MQTT {channel} for {device_id}: {list(fields.keys())}")
+        except Exception as e:
+            LOGWARN(f"MQTT {channel} parse error: {e}")
+
+    elif channel == "location":
+        try:
+            raw = json.loads(payload.decode("utf-8", "replace"))
+            entry = (raw[-1] if isinstance(raw, list) and raw
+                     else raw if isinstance(raw, dict) else {})
+
+            state_upd: dict = {}
+            vs = entry.get("vehicleState")
+            if vs is not None:
+                try:
+                    state_upd["vehicleState"] = int(vs)
+                except (TypeError, ValueError):
+                    state_upd["vehicleState"] = vs
+            pct = entry.get("mowingPercentage")
+            if pct is not None:
+                try:
+                    state_upd["mowingPercentage"] = int(pct)
+                except (TypeError, ValueError):
+                    state_upd["mowingPercentage"] = pct
+            if state_upd:
+                _update_state(device_id, state_upd)
+
+            loc: dict = {}
+            for key in ("postureX", "postureY", "postureTheta"):
+                v = entry.get(key)
+                if v is not None:
+                    try:
+                        loc[key] = float(v)
+                    except (TypeError, ValueError):
+                        loc[key] = v
+            if pct is not None:
+                loc["mowingPercentage"] = state_upd.get("mowingPercentage", pct)
+            if entry.get("time") is not None:
+                loc["time"] = entry["time"]
+            _location_queue.put_nowait({"device_id": device_id, "data": loc})
+            LOGDEB(f"Location queued for {device_id}")
+        except asyncio.QueueFull:
+            pass
+        except Exception as e:
+            LOGWARN(f"Location parse error: {e}")
+
+    elif channel == "event":
+        try:
+            evt = json.loads(payload.decode("utf-8", "replace"))
+            _event_queue.put_nowait({"device_id": device_id, "data": evt})
+            LOGINF(f"Event queued for {device_id}")
+        except asyncio.QueueFull:
+            pass
+        except Exception as e:
+            LOGWARN(f"Event parse error: {e}")
 
 
-# ── SDK MQTT patch: location + event channels ─────────────────────────────────
-def _patch_sdk_mqtt(sdk: "NavimowSDK", device_ids: list) -> None:
-    """Extend NavimowSDK to subscribe to location/event and handle their payloads.
+# ── Navimow Cloud MQTT client ─────────────────────────────────────────────────
+class NavimowCloudMQTT:
+    """Manages the WSS paho-MQTT connection to the Navimow cloud broker.
 
-    The SDK subscribes only to state/event/attributes. We patch subscribe_all
-    and on_message on the internal NavimowMQTT instance before connect().
+    Replaces NavimowSDK. Uses paho directly with WebSocket/TLS transport.
+    The Authorization: Bearer token is injected on every WS upgrade.
     """
-    mqtt_client = sdk._mqtt
 
-    _orig_subscribe_all = mqtt_client.subscribe_all
+    KEEPALIVE = 2400  # seconds — matches TA2k/ioBroker.navimow
 
-    def _subscribe_all_extended(product_key: str, device_name: str) -> None:
-        _orig_subscribe_all(product_key, device_name)
-        for did in device_ids:
-            mqtt_client.client.subscribe(f"/downlink/vehicle/{did}/realtimeDate/location")
-            mqtt_client.client.subscribe(f"/downlink/vehicle/{did}/#")
-        LOGINF(f"Subscribed to location+wildcard topics for {len(device_ids)} device(s)")
+    def __init__(self, mqtt_host: str, mqtt_url: str,
+                 username: str, password: str, token: str, device_ids: list):
+        self._host, self._ws_path = self._parse_endpoint(mqtt_host, mqtt_url)
+        self._username   = username
+        self._password   = password
+        self._token      = token
+        self._device_ids = list(device_ids)
+        self._client     = None
+        self._loop       = None
+        self._token_ref  = [token]  # mutable list so the WS-headers closure picks up updates
 
-    mqtt_client.subscribe_all = _subscribe_all_extended
+    @staticmethod
+    def _parse_endpoint(mqtt_host: str, mqtt_url: str) -> tuple:
+        host = mqtt_host or ""
+        if "://" in host:
+            host = urlparse(host).hostname or host
+        ws_path = "/"
+        if mqtt_url:
+            parsed = urlparse(mqtt_url)
+            if parsed.hostname and not host:
+                host = parsed.hostname
+            path = parsed.path or "/"
+            ws_path = (path + "?" + parsed.query) if parsed.query else path
+        return (host or "mqtt-fra.navimow.com"), ws_path
 
-    _orig_on_message = mqtt_client.on_message
+    def _make_client(self, client_id: str):
+        try:
+            client = _paho.Client(
+                callback_api_version=_paho.CallbackAPIVersion.VERSION1,
+                client_id=client_id,
+                transport="websockets",
+            )
+        except (TypeError, AttributeError):
+            client = _paho.Client(client_id=client_id, transport="websockets")
 
-    async def _on_message_extended(topic: str, payload: bytes, device_id: str) -> None:
-        global _activity_refresh_due, _last_activity
-        _touch_cloud_msg_time()
+        if self._username and self._password:
+            client.username_pw_set(self._username, self._password)
 
-        # Trigger a REST status refresh when push activity resumes after a gap
-        now = time.time()
-        if (now - _last_activity) > 30:
-            _activity_refresh_due = True
-        _last_activity = now
+        token_ref = self._token_ref
 
-        parts = topic.strip("/").split("/")
-        channel = parts[4] if len(parts) >= 5 else None
+        def _ws_headers(headers):
+            h = dict(headers)
+            h["Authorization"] = "Bearer " + token_ref[0]
+            h.pop("Origin", None)
+            return h
 
-        if channel in ("state", "attributes"):
-            # Parse raw MQTT payload and extract ALL available fields.
-            # The SDK only surfaces a small subset; everything else (action,
-            # mowingWeekArea, subtotalArea, signalStrength, mapWorkPosition …)
-            # is only available in the raw payload.
+        client.ws_set_options(path=self._ws_path, headers=_ws_headers)
+        client.tls_set()
+        client.reconnect_delay_set(min_delay=5, max_delay=60)
+        client.on_connect    = self._cb_connect
+        client.on_message    = self._cb_message
+        client.on_disconnect = self._cb_disconnect
+        return client
+
+    def _cb_connect(self, client, userdata, flags, rc):
+        if rc != 0:
+            LOGWARN(f"Cloud MQTT connect failed rc={rc}")
+            return
+        LOGOK("Cloud MQTT connected")
+        for did in self._device_ids:
+            for ch in ("state", "event", "attributes", "location"):
+                client.subscribe(f"/downlink/vehicle/{did}/realtimeDate/{ch}")
+            client.subscribe(f"/downlink/vehicle/{did}/#")
+        LOGINF(f"Subscribed to cloud MQTT topics for {len(self._device_ids)} device(s)")
+
+    def _cb_disconnect(self, client, userdata, rc):
+        LOGINF(f"Cloud MQTT disconnected rc={rc}")
+
+    def _cb_message(self, client, userdata, msg):
+        parts = [p for p in msg.topic.split("/") if p]
+        if len(parts) < 3 or parts[0] != "downlink" or parts[1] != "vehicle":
+            return
+        device_id = parts[2]
+        channel   = parts[4] if len(parts) >= 5 else None
+        if self._loop and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(
+                _on_cloud_message, device_id, channel, msg.payload
+            )
+
+    def connect(self, loop) -> None:
+        self._loop = loop
+        self.disconnect()
+        client_id = "navimow_loxberry_" + uuid.uuid4().hex[:10]
+        client = self._make_client(client_id)
+        self._client = client
+        try:
+            client.connect(self._host, 443, keepalive=self.KEEPALIVE)
+            client.loop_start()
+            LOGINF(f"Cloud MQTT connecting to {self._host}:443")
+        except Exception as e:
+            LOGERR(f"Cloud MQTT connect error: {e}")
+            client.loop_stop()
+            self._client = None
+
+    def disconnect(self) -> None:
+        if self._client:
             try:
-                raw = json.loads(payload.decode("utf-8", "replace"))
-                if isinstance(raw, list) and raw:
-                    raw = raw[-1]
-                if isinstance(raw, dict) and raw:
-                    fields = _extract_vehicle_status_fields(raw)
-                    if fields:
-                        _update_state(device_id, fields)
-                        LOGDEB(f"MQTT {channel} raw fields for {device_id}: {list(fields.keys())}")
-            except Exception as e:
-                LOGWARN(f"MQTT {channel} raw parse error: {e}")
-
-        elif channel == "location":
-            try:
-                raw = json.loads(payload.decode("utf-8", "replace"))
-                # Cloud sends a JSON array; take the last (most recent) entry
-                entry = raw[-1] if isinstance(raw, list) and raw else (
-                    raw if isinstance(raw, dict) else {}
-                )
-                # vehicleState numeric + mowingPercentage → merge into state cache
-                state_upd: dict = {}
-                vs = entry.get("vehicleState")
-                if vs is not None:
-                    try:
-                        state_upd["vehicleState"] = int(vs)
-                    except (TypeError, ValueError):
-                        state_upd["vehicleState"] = vs
-                pct = entry.get("mowingPercentage")
-                if pct is not None:
-                    try:
-                        state_upd["mowingPercentage"] = int(pct)
-                    except (TypeError, ValueError):
-                        state_upd["mowingPercentage"] = pct
-                if state_upd:
-                    _update_state(device_id, state_upd)
-
-                # Build clean location payload
-                loc: dict = {}
-                for key in ("postureX", "postureY", "postureTheta"):
-                    v = entry.get(key)
-                    if v is not None:
-                        try:
-                            loc[key] = float(v)
-                        except (TypeError, ValueError):
-                            loc[key] = v
-                if pct is not None:
-                    loc["mowingPercentage"] = state_upd.get("mowingPercentage", pct)
-                t = entry.get("time")
-                if t is not None:
-                    loc["time"] = t
-                _location_queue.put_nowait({"device_id": device_id, "data": loc})
-                LOGDEB(f"Location queued for {device_id}")
-            except asyncio.QueueFull:
+                self._client.loop_stop()
+                self._client.disconnect()
+            except Exception:
                 pass
-            except Exception as e:
-                LOGWARN(f"Location parse error: {e}")
+            self._client = None
 
-        elif channel == "event":
-            try:
-                evt = json.loads(payload.decode("utf-8", "replace"))
-                _event_queue.put_nowait({"device_id": device_id, "data": evt})
-                LOGINF(f"Event queued for {device_id}")
-            except asyncio.QueueFull:
-                pass
-            except Exception as e:
-                LOGWARN(f"Event parse error: {e}")
-
-        await _orig_on_message(topic, payload, device_id)
-
-    mqtt_client.on_message = _on_message_extended
+    def update_token(self, token: str) -> None:
+        self._token = token
+        self._token_ref[0] = token  # picked up by WS-headers closure on next connect
 
 
-# ── Task 7: Navimow MQTT → LoxBerry MQTT ─────────────────────────────────────
+# ── REST init ─────────────────────────────────────────────────────────────────
+async def rest_init(plugin_cfg: dict, session: aiohttp.ClientSession) -> dict:
+    """Fetch device list and MQTT credentials. Updates plugin_cfg in place."""
+    token = plugin_cfg.get("access_token", "")
+    if not token:
+        LOGWARN("No access token — skipping REST init")
+        return {}
+
+    auth_devices = await _rest_get_auth_list(session, token)
+    if auth_devices:
+        LOGOK(f"Found {len(auth_devices)} device(s) on account")
+        plugin_cfg["devices"] = [
+            {"device_id": d["id"], "name": d.get("name") or d.get("deviceName") or d["id"]}
+            for d in auth_devices if d.get("id")
+        ]
+        save_plugin_config(plugin_cfg)
+    else:
+        LOGWARN("No devices found via authList")
+
+    mqtt_info = await _rest_get_mqtt_info(session, token)
+    if mqtt_info:
+        LOGINF(f"Navimow MQTT host: {mqtt_info.get('mqttHost', '?')}")
+    return mqtt_info
+
+
+# ── Task 7: Navimow cloud → LoxBerry MQTT ────────────────────────────────────
 async def task_navimow_to_mqtt(
-    sdk: "NavimowSDK",
     base_topic: str,
     broker: dict,
     shutdown: asyncio.Event,
 ) -> None:
-    """Publish state / location / event updates to LoxBerry MQTT broker."""
     mqtt_kwargs = _build_mqtt_kwargs(broker)
-
     while not shutdown.is_set():
         try:
             async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
                 LOGOK(f"Connected to LoxBerry MQTT {broker['host']}:{broker['port']}")
                 while not shutdown.is_set():
-                    # Wait for a state publish signal (5s timeout keeps the loop alive)
                     try:
                         device_id = await asyncio.wait_for(
                             _state_publish_queue.get(), timeout=5.0
@@ -640,7 +680,6 @@ async def task_navimow_to_mqtt(
                     except asyncio.TimeoutError:
                         device_id = None
 
-                    # Drain all pending signals and deduplicate device IDs
                     to_publish: set = set()
                     if device_id:
                         to_publish.add(device_id)
@@ -658,9 +697,8 @@ async def task_navimow_to_mqtt(
                                 json.dumps(state), retain=True
                             )
                             LOGDEB(f"Published state for {did}: "
-                                   f"vehicleState_desc={state.get('vehicleState_desc', '?')}")
+                                   f"{state.get('vehicleState_desc', '?')}")
 
-                    # Drain location queue
                     while not _location_queue.empty():
                         try:
                             loc = _location_queue.get_nowait()
@@ -674,7 +712,6 @@ async def task_navimow_to_mqtt(
                         except Exception as e:
                             LOGWARN(f"Location publish error: {e}")
 
-                    # Drain event queue
                     while not _event_queue.empty():
                         try:
                             evt = _event_queue.get_nowait()
@@ -694,9 +731,7 @@ async def task_navimow_to_mqtt(
                 await asyncio.sleep(10)
 
 
-async def _publish_command_result(
-    lbmqtt, base_topic: str, device_id: str, cmd: str, ok: bool, reason: str = "none"
-) -> None:
+async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason="none"):
     payload = json.dumps({
         "command":    cmd,
         "result":     "ok" if ok else "error",
@@ -704,127 +739,85 @@ async def _publish_command_result(
         "reason":     reason,
     })
     try:
-        await lbmqtt.publish(f"{base_topic}/{device_id}/command_result", payload, retain=False)
+        await lbmqtt.publish(f"{base_topic}/{device_id}/command_result",
+                             payload, retain=False)
     except Exception as e:
         LOGWARN(f"Could not publish command_result: {e}")
 
 
-# ── Task 8: LoxBerry MQTT → Navimow Commands ─────────────────────────────────
+# ── Task 8: LoxBerry MQTT → Navimow commands ─────────────────────────────────
 async def task_mqtt_to_navimow(
-    api: "MowerAPI",
+    session: aiohttp.ClientSession,
+    plugin_cfg: dict,
     base_topic: str,
     broker: dict,
     shutdown: asyncio.Event,
 ) -> None:
-    """Subscribe to LoxBerry MQTT set-topics and forward commands to Navimow via REST."""
     mqtt_kwargs = _build_mqtt_kwargs(broker)
-
     while not shutdown.is_set():
         try:
             async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
                 await lbmqtt.subscribe(f"{base_topic}/+/set")
                 LOGINF(f"Subscribed to {base_topic}/+/set")
-
                 async for message in lbmqtt.messages:
                     if shutdown.is_set():
                         break
-                    topic_parts = str(message.topic).split("/")
-                    if len(topic_parts) < 3:
+                    parts = str(message.topic).split("/")
+                    if len(parts) < 3:
                         continue
-                    device_id = topic_parts[-2]
-                    payload = message.payload.decode("utf-8", errors="replace").strip()
-
-                    if api is None:
-                        LOGWARN(f"Command ignored — no API client available (device {device_id})")
+                    device_id = parts[-2]
+                    cmd = message.payload.decode("utf-8", errors="replace").strip().lower()
+                    token = plugin_cfg.get("access_token", "")
+                    if not token:
+                        LOGWARN(f"Command ignored — no token (device {device_id})")
                         continue
-
-                    cmd = payload.lower()
-                    if cmd in ("start", "resume"):
-                        mower_cmd = MowerCommand.START if cmd == "start" else MowerCommand.RESUME
-                        try:
-                            await api.async_send_command(device_id, mower_cmd)
-                            LOGOK(f"{cmd}({device_id})")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True)
-                        except MowerAPIError as e:
-                            reason = e.error_code or "unknown"
-                            LOGERR(f"{cmd}({device_id}) failed: {e}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, reason)
-                        except Exception as e:
-                            LOGERR(f"{cmd}({device_id}) failed: {e}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, "unknown")
-                    elif cmd == "pause":
-                        try:
-                            await api.async_send_command(device_id, MowerCommand.PAUSE)
-                            LOGOK(f"pause({device_id})")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "pause", True)
-                        except MowerAPIError as e:
-                            reason = e.error_code or "unknown"
-                            LOGERR(f"pause({device_id}) failed: {e}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, reason)
-                        except Exception as e:
-                            LOGERR(f"pause({device_id}) failed: {e}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "pause", False, "unknown")
-                    elif cmd in ("dock", "return", "home"):
-                        try:
-                            await api.async_send_command(device_id, MowerCommand.DOCK)
-                            LOGOK(f"dock({device_id})")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "dock", True)
-                        except MowerAPIError as e:
-                            reason = e.error_code or "unknown"
-                            LOGERR(f"dock({device_id}) failed: {e}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, reason)
-                        except Exception as e:
-                            LOGERR(f"dock({device_id}) failed: {e}")
-                            await _publish_command_result(lbmqtt, base_topic, device_id, "dock", False, "unknown")
+                    canonical = _COMMAND_ALIASES.get(cmd, cmd)
+                    if canonical not in _COMMAND_MAP:
+                        LOGWARN(f"Unknown command: {cmd}")
+                        continue
+                    ok, reason = await _rest_send_command(session, token, device_id, canonical)
+                    if ok:
+                        LOGOK(f"{canonical}({device_id})")
                     else:
-                        LOGWARN(f"Unknown command: {payload}")
-
+                        LOGERR(f"{canonical}({device_id}) failed: {reason}")
+                    await _publish_command_result(lbmqtt, base_topic, device_id,
+                                                  canonical, ok, reason)
         except Exception as e:
             if not shutdown.is_set():
                 LOGERR(f"Command MQTT error: {e} — reconnecting in 10s")
                 await asyncio.sleep(10)
 
 
-# ── Task 9: Token Refresh Watchdog ────────────────────────────────────────────
+# ── Task 9: Token Refresh ─────────────────────────────────────────────────────
 async def _do_token_refresh(plugin_cfg: dict, session: aiohttp.ClientSession) -> bool:
     refresh_token = plugin_cfg.get("refresh_token", "")
     if not refresh_token:
-        LOGERR("No refresh_token available — re-authentication required")
+        LOGERR("No refresh_token — re-authentication required")
         return False
-
     try:
         async with session.post(
             TOKEN_URL,
-            data={
-                "grant_type":    "refresh_token",
-                "refresh_token": refresh_token,
-                "client_id":     CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-            },
+            data={"grant_type": "refresh_token", "refresh_token": refresh_token,
+                  "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         ) as resp:
             if resp.status != 200:
-                body = await resp.text()
-                LOGERR(f"Token refresh HTTP {resp.status}: {body[:200]}")
+                LOGERR(f"Token refresh HTTP {resp.status}: {(await resp.text())[:200]}")
                 return False
             raw = await resp.json(content_type=None)
-
         data        = raw.get("data", raw) if isinstance(raw.get("data"), dict) else raw
         new_token   = data.get("access_token", "")
         new_refresh = data.get("refresh_token", refresh_token)
         expires_in  = int(data.get("expires_in", 3600))
-
         if not new_token:
             LOGERR("Token refresh: empty access_token in response")
             return False
-
         plugin_cfg["access_token"]  = new_token
         plugin_cfg["refresh_token"] = new_refresh
         plugin_cfg["expires_at"]    = int(time.time()) + expires_in
         save_plugin_config(plugin_cfg)
         LOGOK(f"Token refreshed — valid for {expires_in}s")
         return True
-
     except Exception as e:
         LOGERR(f"Token refresh error: {e}")
         return False
@@ -833,40 +826,25 @@ async def _do_token_refresh(plugin_cfg: dict, session: aiohttp.ClientSession) ->
 async def task_token_refresh(
     plugin_cfg: dict,
     session: aiohttp.ClientSession,
-    sdk: "NavimowSDK",
-    api: "MowerAPI",
+    cloud_mqtt,
     shutdown: asyncio.Event,
 ) -> None:
     while not shutdown.is_set():
         await asyncio.sleep(60)
         if shutdown.is_set():
             break
-
         expires_at = plugin_cfg.get("expires_at", 0)
         time_left  = expires_at - time.time()
-
         if time_left > 300:
             LOGDEB(f"Token valid for {int(time_left)}s")
             continue
-
         LOGINF("Token expiring soon — refreshing")
         ok = await _do_token_refresh(plugin_cfg, session)
-        if ok:
-            new_token = plugin_cfg["access_token"]
-            if sdk:
-                sdk.update_mqtt_credentials(
-                    auth_headers={"Authorization": f"Bearer {new_token}"}
-                )
-            if api:
-                api.set_token(new_token)
+        if ok and cloud_mqtt:
+            cloud_mqtt.update_token(plugin_cfg["access_token"])
 
 
 # ── Task 10: REST Poll ────────────────────────────────────────────────────────
-# Replaces the old REST fallback. Polls getVehicleStatus:
-#   • Once at startup
-#   • Every 5 minutes
-#   • Immediately when MQTT push activity resumes after a >30s gap
-
 _REST_POLL_INTERVAL = 300  # seconds
 
 
@@ -887,8 +865,7 @@ async def task_rest_poll(
             return
         token = plugin_cfg.get("access_token", "")
         LOGINF(f"REST poll ({reason}): querying {len(device_ids)} device(s)")
-        devices = await _rest_get_vehicle_status(session, token, device_ids)
-        for dev in devices:
+        for dev in await _rest_get_vehicle_status(session, token, device_ids):
             did = dev.get("id") or dev.get("device_id")
             if not did:
                 continue
@@ -897,7 +874,6 @@ async def task_rest_poll(
                 _update_state(did, fields)
                 LOGDEB(f"REST poll updated {did}: {list(fields.keys())}")
 
-    # Startup poll
     await _do_poll("startup")
     last_poll = time.time()
 
@@ -917,50 +893,47 @@ async def task_rest_poll(
 
 # ── Task 11: Cloud MQTT Watchdog ──────────────────────────────────────────────
 async def task_cloud_mqtt_watchdog(
-    sdk: "NavimowSDK",
-    api: "MowerAPI",
+    cloud_mqtt: "NavimowCloudMQTT",
+    session: aiohttp.ClientSession,
     plugin_cfg: dict,
     shutdown: asyncio.Event,
 ) -> None:
-    """Reconnect cloud MQTT if no message received for 120s while mower is active."""
-    if sdk is None:
+    if cloud_mqtt is None:
         return
-
     while not shutdown.is_set():
         await asyncio.sleep(60)
         if shutdown.is_set():
             break
-
         silence = time.time() - _last_cloud_msg_time
         if silence < 120:
             continue
 
-        if api is None:
+        device_ids = [d["device_id"] for d in plugin_cfg.get("devices", [])]
+        token = plugin_cfg.get("access_token", "")
+        if not device_ids or not token:
             continue
+
+        active = False
         try:
-            device_ids = [d["device_id"] for d in plugin_cfg.get("devices", [])]
-            if not device_ids:
-                continue
-            statuses = await api.async_get_device_statuses(device_ids)
-            active = any(
-                s.status.value not in ("docked", "charging", "unknown")
-                for s in statuses.values()
-            )
+            for dev in await _rest_get_vehicle_status(session, token, device_ids):
+                for key in ("vehicleState", "state"):
+                    raw = dev.get(key)
+                    if raw and not str(raw).lstrip("-").isdigit():
+                        text, _ = _normalize_vehicle_state(str(raw))
+                        if text not in ("docked", "charging", "offline", "unknown"):
+                            active = True
+                        break
+                if active:
+                    break
         except Exception:
-            active = False
+            pass
 
         if active:
             LOGWARN(f"Cloud MQTT silent for {int(silence)}s while mower active — reconnecting")
-            try:
-                sdk.disconnect()
-            except Exception:
-                pass
+            cloud_mqtt.disconnect()
             await asyncio.sleep(2)
-            try:
-                sdk.connect()
-                LOGOK("Cloud MQTT reconnected by watchdog")
-            except Exception as e:
-                LOGERR(f"Cloud MQTT watchdog reconnect failed: {e}")
+            cloud_mqtt.connect(asyncio.get_event_loop())
+            LOGOK("Cloud MQTT reconnected by watchdog")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -968,42 +941,40 @@ async def main() -> None:
     LOGSTART("Navimow Gateway starting")
     write_pid()
 
-    loop = asyncio.get_running_loop()
+    loop = asyncio.get_event_loop()
     try:
         loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)
         loop.add_signal_handler(signal.SIGINT,  _handle_sigterm)
     except NotImplementedError:
         pass
 
-    general = load_general_config()
+    general    = load_general_config()
     plugin_cfg = load_plugin_config()
-    broker = get_mqtt_broker_config(general)
+    broker     = get_mqtt_broker_config(general)
 
-    LOGINF(f"LoxBerry MQTT broker: {broker['host']}:{broker['port']} tls={broker['tls']} user={'set' if broker['username'] else 'none'}")
+    LOGINF(f"LoxBerry MQTT broker: {broker['host']}:{broker['port']} "
+           f"tls={broker['tls']} user={'set' if broker['username'] else 'none'}")
     LOGINF(f"Base topic: {plugin_cfg['base_topic']}")
     LOGINF(f"Devices cached: {len(plugin_cfg['devices'])}")
 
     if not plugin_cfg["access_token"]:
-        LOGWARN("No access token configured — gateway will wait for authentication")
+        LOGWARN("No access token configured")
 
     async with aiohttp.ClientSession() as session:
-        # Refresh token at startup if expired or expiring within 60s
         if plugin_cfg.get("access_token"):
-            expires_at = plugin_cfg.get("expires_at", 0)
-            if time.time() >= expires_at - 60:
+            if time.time() >= plugin_cfg.get("expires_at", 0) - 60:
                 LOGINF("Token expired at startup — attempting immediate refresh")
                 await _do_token_refresh(plugin_cfg, session)
 
-        api, mqtt_info = await rest_init(plugin_cfg, session)
+        mqtt_info = await rest_init(plugin_cfg, session)
 
-        # Publish static mower info from authList (model, firmware, name)
+        # Publish static mower info (model, firmware) — retain=True, persists across restarts
         if plugin_cfg.get("access_token") and plugin_cfg.get("devices"):
-            base_topic = plugin_cfg["base_topic"]
+            base_topic   = plugin_cfg["base_topic"]
             auth_devices = await _rest_get_auth_list(session, plugin_cfg["access_token"])
             if auth_devices:
                 try:
-                    mqtt_kwargs = _build_mqtt_kwargs(broker)
-                    async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
+                    async with aiomqtt.Client(**_build_mqtt_kwargs(broker)) as lbmqtt:
                         for dev in auth_devices:
                             did = dev.get("id")
                             if not did:
@@ -1027,61 +998,40 @@ async def main() -> None:
                 except Exception as e:
                     LOGWARN(f"Could not publish mower info: {e}")
 
-        navimow_sdk = None
+        # Create cloud MQTT client (replaces NavimowSDK)
+        cloud_mqtt = None
         if mqtt_info and plugin_cfg.get("access_token"):
-            class _DeviceRecord:
-                def __init__(self, did, dname):
-                    self.id = did
-                    self.name = dname
-                    self.product_key = None
-                    self.device_name = dname
-                    self.iot_id = did
-
-            records = [
-                _DeviceRecord(d["device_id"], d["name"])
-                for d in plugin_cfg.get("devices", [])
-            ]
-
-            navimow_sdk = NavimowSDK(
-                broker=mqtt_info.get("mqttHost", ""),
-                port=443,
-                username=mqtt_info.get("userName"),
-                password=mqtt_info.get("pwdInfo"),
-                ws_path=mqtt_info.get("mqttUrl"),
-                auth_headers={"Authorization": f"Bearer {plugin_cfg['access_token']}"},
-                records=records,
+            device_ids = [d["device_id"] for d in plugin_cfg.get("devices", [])]
+            cloud_mqtt = NavimowCloudMQTT(
+                mqtt_host  = mqtt_info.get("mqttHost", ""),
+                mqtt_url   = mqtt_info.get("mqttUrl",  ""),
+                username   = mqtt_info.get("userName"),
+                password   = mqtt_info.get("pwdInfo"),
+                token      = plugin_cfg["access_token"],
+                device_ids = device_ids,
             )
-            navimow_sdk.on_state(_on_navimow_state_tracked)
-            _patch_sdk_mqtt(navimow_sdk, [d["device_id"] for d in plugin_cfg.get("devices", [])])
-            navimow_sdk.connect()
-            LOGINF("NavimowSDK connected to cloud MQTT")
+            cloud_mqtt.connect(loop)
         else:
-            LOGWARN("NavimowSDK not started — missing token or MQTT info")
+            LOGWARN("Cloud MQTT not started — missing token or MQTT info")
 
         base_topic = plugin_cfg["base_topic"]
-        tasks = []
-
-        if navimow_sdk:
-            tasks.append(asyncio.create_task(
-                task_navimow_to_mqtt(navimow_sdk, base_topic, broker, _shutdown_event)
-            ))
-
-        if api:
-            tasks.append(asyncio.create_task(
-                task_mqtt_to_navimow(api, base_topic, broker, _shutdown_event)
-            ))
-
-        tasks.append(asyncio.create_task(
-            task_token_refresh(plugin_cfg, session, navimow_sdk, api, _shutdown_event)
-        ))
-
-        tasks.append(asyncio.create_task(
-            task_rest_poll(session, plugin_cfg, _shutdown_event)
-        ))
-
-        tasks.append(asyncio.create_task(
-            task_cloud_mqtt_watchdog(navimow_sdk, api, plugin_cfg, _shutdown_event)
-        ))
+        tasks = [
+            asyncio.create_task(
+                task_navimow_to_mqtt(base_topic, broker, _shutdown_event)
+            ),
+            asyncio.create_task(
+                task_mqtt_to_navimow(session, plugin_cfg, base_topic, broker, _shutdown_event)
+            ),
+            asyncio.create_task(
+                task_token_refresh(plugin_cfg, session, cloud_mqtt, _shutdown_event)
+            ),
+            asyncio.create_task(
+                task_rest_poll(session, plugin_cfg, _shutdown_event)
+            ),
+            asyncio.create_task(
+                task_cloud_mqtt_watchdog(cloud_mqtt, session, plugin_cfg, _shutdown_event)
+            ),
+        ]
 
         await _shutdown_event.wait()
 
@@ -1090,8 +1040,8 @@ async def main() -> None:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        if navimow_sdk:
-            navimow_sdk.disconnect()
+        if cloud_mqtt:
+            cloud_mqtt.disconnect()
 
     LOGINF("Gateway stopped")
     remove_pid()

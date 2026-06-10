@@ -31,7 +31,7 @@
   </a>
 </div>
 
-<!-- Three cards: Authentifizierung | Geräte | Navimow SDK -->
+<!-- Two cards: Authentifizierung | Geräte -->
 <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-start; margin-bottom:1.5rem;">
 
   <!-- Authentication card -->
@@ -83,36 +83,5 @@
     </div>
   </div>
 
-  <!-- Navimow SDK card -->
-  <div class="lb-card" style="flex:1 1 200px;">
-    <div class="lb-card-body">
-      <div class="lb-section-title"><TMPL_VAR "SDK.HEADER"></div>
-      <div class="lb-form-row">
-        <div class="lb-form-label"><TMPL_VAR "SDK.LABEL_INSTALLED"></div>
-        <div class="lb-form-field">
-          <span id="sdk_installed">--</span>
-        </div>
-      </div>
-      <div class="lb-form-row">
-        <div class="lb-form-label"><TMPL_VAR "SDK.LABEL_AVAILABLE"></div>
-        <div class="lb-form-field">
-          <span id="sdk_available">--</span>
-        </div>
-      </div>
-      <div style="margin-top:0.75rem; display:flex; align-items:center; justify-content:center; gap:0.75rem; flex-wrap:wrap;">
-        <button id="btn_sdk_update" type="button" class="lb-btn lb-btn-sm"
-                style="background:#6dac20; border-color:#5a9118; color:#fff;">
-          <TMPL_VAR "SDK.BTN_UPDATE">
-        </button>
-        <span id="sdk_update_status" style="display:none; color:#888; font-size:0.9em;">
-          <TMPL_VAR "SDK.UPDATING">
-        </span>
-      </div>
-      <p style="margin-top:1rem; color:#888; font-size:0.8em;">
-        Powered by <a href="https://github.com/segwaynavimow/navimow-sdk" target="_blank">navimow-sdk</a>.
-        Thanks to the navimow-sdk contributors.
-      </p>
-    </div>
-  </div>
 
 </div>
