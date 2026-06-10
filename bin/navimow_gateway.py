@@ -17,7 +17,7 @@ import aiohttp
 from mower_sdk.api import MowerAPI
 import aiomqtt
 from mower_sdk.sdk import NavimowSDK
-from mower_sdk.models import DeviceStateMessage, MowerCommand
+from mower_sdk.models import DeviceStateMessage, DeviceAttributesMessage, MowerCommand
 from mower_sdk.errors import MowerAPIError
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
@@ -310,12 +310,21 @@ async def rest_init(
 
 # ── Task 7: Navimow MQTT → LoxBerry MQTT ─────────────────────────────────────
 _state_queue: asyncio.Queue = asyncio.Queue()
+_attributes_queue: asyncio.Queue = asyncio.Queue()
 
 
 def _on_navimow_state(msg: "DeviceStateMessage") -> None:
     """Synchronous callback from NavimowSDK — bridge to async queue."""
     try:
         _state_queue.put_nowait(msg)
+    except asyncio.QueueFull:
+        pass
+
+
+def _on_navimow_attributes(msg: "DeviceAttributesMessage") -> None:
+    """Synchronous callback from NavimowSDK — bridge to async queue."""
+    try:
+        _attributes_queue.put_nowait(msg)
     except asyncio.QueueFull:
         pass
 
@@ -339,27 +348,43 @@ async def task_navimow_to_mqtt(
                             _state_queue.get(), timeout=5.0
                         )
                     except asyncio.TimeoutError:
-                        continue
+                        msg = None
 
-                    device_id = msg.device_id
-                    state_str = msg.state or "unknown"
-                    error_str = _normalize_error(msg.error)
-                    data: dict = {
-                        "state":     state_str,
-                        "state_num": _STATE_CODES.get(state_str, 99),
-                        "battery":   msg.battery,
-                        "error":     error_str,
-                        "error_num": _ERROR_CODES.get(error_str, 99),
-                    }
-                    if msg.signal_strength is not None:
-                        data["signal_strength"] = msg.signal_strength
-                    if msg.position is not None:
-                        data["position"] = msg.position
-                    state_payload = json.dumps(data)
-                    await lbmqtt.publish(
-                        f"{base_topic}/{device_id}/state", state_payload, retain=True
-                    )
-                    LOGDEB(f"Published state for {device_id}: {state_str} / error={error_str}")
+                    if msg is not None:
+                        device_id = msg.device_id
+                        state_str = msg.state or "unknown"
+                        error_str = _normalize_error(msg.error)
+                        data: dict = {
+                            "state":     state_str,
+                            "state_num": _STATE_CODES.get(state_str, 99),
+                            "battery":   msg.battery,
+                            "error":     error_str,
+                            "error_num": _ERROR_CODES.get(error_str, 99),
+                        }
+                        if msg.signal_strength is not None:
+                            data["signal_strength"] = msg.signal_strength
+                        if msg.position is not None:
+                            data["position"] = msg.position
+                        state_payload = json.dumps(data)
+                        await lbmqtt.publish(
+                            f"{base_topic}/{device_id}/state", state_payload, retain=True
+                        )
+                        LOGDEB(f"Published state for {device_id}: {state_str} / error={error_str}")
+
+                    # Drain attributes queue every loop cycle (max 5s delay)
+                    while not _attributes_queue.empty():
+                        try:
+                            attrs_msg = _attributes_queue.get_nowait()
+                            attrs_payload = json.dumps(attrs_msg.attributes)
+                            await lbmqtt.publish(
+                                f"{base_topic}/{attrs_msg.device_id}/attributes",
+                                attrs_payload, retain=True
+                            )
+                            LOGDEB(f"Published attributes for {attrs_msg.device_id}: keys={list(attrs_msg.attributes.keys())}")
+                        except asyncio.QueueEmpty:
+                            break
+                        except Exception as e:
+                            LOGWARN(f"Attributes publish error: {e}")
 
         except Exception as e:
             if not shutdown.is_set():
@@ -664,6 +689,7 @@ async def main() -> None:
                 records=records,
             )
             navimow_sdk.on_state(_on_navimow_state_tracked)
+            navimow_sdk.on_attributes(_on_navimow_attributes)
             navimow_sdk.connect()
             LOGINF("NavimowSDK connected to cloud MQTT")
         else:
