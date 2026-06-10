@@ -441,6 +441,7 @@ def _update_auth_status(plugin_cfg: dict, base_topic: str) -> None:
     _auth_payload.clear()
     _auth_payload.update({
         "topic":         f"{base_topic}/gateway",
+        "state":         "running",
         "authenticated": bool(token and expires_at > time.time()),
         "expires_at":    expires_at,
         "token":         token,
@@ -700,9 +701,12 @@ async def task_navimow_to_mqtt(
     shutdown: asyncio.Event,
 ) -> None:
     mqtt_kwargs = _build_mqtt_kwargs(broker)
+    gw_topic    = f"{base_topic}/gateway"
+    lwt_payload = json.dumps({"state": "stopped"})
+    will = aiomqtt.Will(topic=gw_topic, payload=lwt_payload, qos=1, retain=True)
     while not shutdown.is_set():
         try:
-            async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
+            async with aiomqtt.Client(**mqtt_kwargs, will=will) as lbmqtt:
                 LOGOK(f"Connected to LoxBerry MQTT {broker['host']}:{broker['port']}")
                 while not shutdown.is_set():
                     try:
@@ -1088,6 +1092,15 @@ async def main() -> None:
 
         if cloud_mqtt:
             cloud_mqtt.disconnect()
+
+        # Publish stopped state on clean shutdown (LWT covers unexpected disconnect)
+        gw_topic = f"{base_topic}/gateway"
+        try:
+            async with aiomqtt.Client(**_build_mqtt_kwargs(broker)) as lbmqtt:
+                await lbmqtt.publish(gw_topic, json.dumps({"state": "stopped"}), retain=True)
+            LOGINF("Published gateway stopped state")
+        except Exception as e:
+            LOGWARN(f"Could not publish stopped state: {e}")
 
     LOGINF("Gateway stopped")
     remove_pid()
