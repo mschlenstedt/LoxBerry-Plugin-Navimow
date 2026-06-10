@@ -80,10 +80,10 @@ $cfg = [];
 if (file_exists($cfg_path)) {
     $cfg = json_decode(file_get_contents($cfg_path), true) ?: [];
 }
-$cfg['access_token']  = $access_token;
+// Only persist the refresh_token — access_token and expires_at live in gateway RAM only
 $cfg['refresh_token'] = $refresh_token;
-$cfg['expires_at']    = time() + $expires_in;
-$cfg['token_type']    = $token_type;
+// Remove stale ephemeral fields if they exist from an older plugin version
+unset($cfg['access_token'], $cfg['expires_at'], $cfg['token_type']);
 
 $tmp = $cfg_path . '.tmp';
 file_put_contents($tmp, json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));

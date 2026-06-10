@@ -113,19 +113,28 @@ def load_general_config() -> dict:
     return _load_json(GENERAL_JSON)
 
 
+_EPHEMERAL_FIELDS = frozenset(("access_token", "expires_at", "token_type"))
+
+
 def load_plugin_config() -> dict:
     cfg = _load_json(PLUGIN_CFG)
-    cfg.setdefault("base_topic",     "navimow")
-    cfg.setdefault("access_token",   "")
-    cfg.setdefault("refresh_token",  "")
-    cfg.setdefault("expires_at",     0)
-    cfg.setdefault("token_type",     "Bearer")
-    cfg.setdefault("devices",        [])
+    # Remove stale ephemeral fields written by older plugin versions
+    if any(k in cfg for k in _EPHEMERAL_FIELDS):
+        for k in _EPHEMERAL_FIELDS:
+            cfg.pop(k, None)
+        _save_json_atomic(PLUGIN_CFG, cfg)
+    cfg.setdefault("base_topic",    "navimow")
+    cfg.setdefault("refresh_token", "")
+    cfg.setdefault("devices",       [])
+    # These live in memory only — never written to SD card
+    cfg["access_token"] = ""
+    cfg["expires_at"]   = 0
     return cfg
 
 
 def save_plugin_config(cfg: dict) -> None:
-    _save_json_atomic(PLUGIN_CFG, cfg)
+    on_disk = {k: v for k, v in cfg.items() if k not in _EPHEMERAL_FIELDS}
+    _save_json_atomic(PLUGIN_CFG, on_disk)
 
 
 def _is_enabled(val) -> bool:
@@ -420,6 +429,25 @@ _state_publish_queue: asyncio.Queue  = asyncio.Queue(maxsize=64)
 _location_queue:      asyncio.Queue  = asyncio.Queue(maxsize=64)
 _event_queue:         asyncio.Queue  = asyncio.Queue(maxsize=64)
 
+# Auth status — published retained to {base_topic}/gateway, read by WebUI via mqtt_get
+_auth_payload: dict = {}
+_auth_dirty:   bool = False
+
+
+def _update_auth_status(plugin_cfg: dict, base_topic: str) -> None:
+    global _auth_dirty
+    token      = plugin_cfg.get("access_token", "")
+    expires_at = plugin_cfg.get("expires_at", 0)
+    masked     = (token[:4] + "..." + token[-4:]) if len(token) > 8 else ("***" if token else "")
+    _auth_payload.clear()
+    _auth_payload.update({
+        "topic":   f"{base_topic}/gateway",
+        "authenticated": bool(token and expires_at > time.time()),
+        "expires_at":    expires_at,
+        "token_masked":  masked,
+    })
+    _auth_dirty = True
+
 _last_cloud_msg_time: float = 0.0
 _last_activity:       float = 0.0
 _activity_refresh_due: bool = False
@@ -647,11 +675,16 @@ async def rest_init(plugin_cfg: dict, session: aiohttp.ClientSession) -> dict:
     auth_devices = await _rest_get_auth_list(session, token)
     if auth_devices:
         LOGOK(f"Found {len(auth_devices)} device(s) on account")
-        plugin_cfg["devices"] = [
+        new_devices = [
             {"device_id": d["id"], "name": d.get("name") or d.get("deviceName") or d["id"]}
             for d in auth_devices if d.get("id")
         ]
-        save_plugin_config(plugin_cfg)
+        if new_devices != plugin_cfg.get("devices", []):
+            plugin_cfg["devices"] = new_devices
+            save_plugin_config(plugin_cfg)
+            LOGINF("Device list changed — persisted to config")
+        else:
+            plugin_cfg["devices"] = new_devices
     else:
         LOGWARN("No devices found via authList")
 
@@ -724,6 +757,14 @@ async def task_navimow_to_mqtt(
                             break
                         except Exception as e:
                             LOGWARN(f"Event publish error: {e}")
+
+                    global _auth_dirty
+                    if _auth_dirty and _auth_payload:
+                        _auth_dirty = False
+                        topic = _auth_payload["topic"]
+                        payload = {k: v for k, v in _auth_payload.items() if k != "topic"}
+                        await lbmqtt.publish(topic, json.dumps(payload), retain=True)
+                        LOGDEB(f"Published auth status: authenticated={payload.get('authenticated')}")
 
         except Exception as e:
             if not shutdown.is_set():
@@ -812,11 +853,14 @@ async def _do_token_refresh(plugin_cfg: dict, session: aiohttp.ClientSession) ->
         if not new_token:
             LOGERR("Token refresh: empty access_token in response")
             return False
-        plugin_cfg["access_token"]  = new_token
-        plugin_cfg["refresh_token"] = new_refresh
-        plugin_cfg["expires_at"]    = int(time.time()) + expires_in
-        save_plugin_config(plugin_cfg)
-        LOGOK(f"Token refreshed — valid for {expires_in}s")
+        plugin_cfg["access_token"] = new_token
+        plugin_cfg["expires_at"]   = int(time.time()) + expires_in
+        if new_refresh != refresh_token:
+            plugin_cfg["refresh_token"] = new_refresh
+            save_plugin_config(plugin_cfg)
+            LOGOK(f"Token refreshed, new refresh_token persisted — valid for {expires_in}s")
+        else:
+            LOGOK(f"Token refreshed (memory only) — valid for {expires_in}s")
         return True
     except Exception as e:
         LOGERR(f"Token refresh error: {e}")
@@ -827,6 +871,7 @@ async def task_token_refresh(
     plugin_cfg: dict,
     session: aiohttp.ClientSession,
     cloud_mqtt,
+    base_topic: str,
     shutdown: asyncio.Event,
 ) -> None:
     while not shutdown.is_set():
@@ -840,8 +885,10 @@ async def task_token_refresh(
             continue
         LOGINF("Token expiring soon — refreshing")
         ok = await _do_token_refresh(plugin_cfg, session)
-        if ok and cloud_mqtt:
-            cloud_mqtt.update_token(plugin_cfg["access_token"])
+        if ok:
+            if cloud_mqtt:
+                cloud_mqtt.update_token(plugin_cfg["access_token"])
+            _update_auth_status(plugin_cfg, base_topic)
 
 
 # ── Task 10: REST Poll ────────────────────────────────────────────────────────
@@ -957,20 +1004,21 @@ async def main() -> None:
     LOGINF(f"Base topic: {plugin_cfg['base_topic']}")
     LOGINF(f"Devices cached: {len(plugin_cfg['devices'])}")
 
-    if not plugin_cfg["access_token"]:
-        LOGWARN("No access token configured")
+    base_topic = plugin_cfg["base_topic"]
+
+    if not plugin_cfg.get("refresh_token"):
+        LOGWARN("No refresh_token — authentication required")
 
     async with aiohttp.ClientSession() as session:
-        if plugin_cfg.get("access_token"):
-            if time.time() >= plugin_cfg.get("expires_at", 0) - 60:
-                LOGINF("Token expired at startup — attempting immediate refresh")
-                await _do_token_refresh(plugin_cfg, session)
+        if plugin_cfg.get("refresh_token"):
+            LOGINF("Refreshing access token at startup")
+            await _do_token_refresh(plugin_cfg, session)
+        _update_auth_status(plugin_cfg, base_topic)
 
         mqtt_info = await rest_init(plugin_cfg, session)
 
         # Publish static mower info (model, firmware) — retain=True, persists across restarts
         if plugin_cfg.get("access_token") and plugin_cfg.get("devices"):
-            base_topic   = plugin_cfg["base_topic"]
             auth_devices = await _rest_get_auth_list(session, plugin_cfg["access_token"])
             if auth_devices:
                 try:
@@ -1014,7 +1062,6 @@ async def main() -> None:
         else:
             LOGWARN("Cloud MQTT not started — missing token or MQTT info")
 
-        base_topic = plugin_cfg["base_topic"]
         tasks = [
             asyncio.create_task(
                 task_navimow_to_mqtt(base_topic, broker, _shutdown_event)
@@ -1023,7 +1070,7 @@ async def main() -> None:
                 task_mqtt_to_navimow(session, plugin_cfg, base_topic, broker, _shutdown_event)
             ),
             asyncio.create_task(
-                task_token_refresh(plugin_cfg, session, cloud_mqtt, _shutdown_event)
+                task_token_refresh(plugin_cfg, session, cloud_mqtt, base_topic, _shutdown_event)
             ),
             asyncio.create_task(
                 task_rest_poll(session, plugin_cfg, _shutdown_event)

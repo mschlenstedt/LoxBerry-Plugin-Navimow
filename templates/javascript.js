@@ -140,5 +140,5 @@ if (btnSaveMqtt) {
 updateGatewayStatus();
 updateTokenStatus();
 setInterval(updateGatewayStatus, 5000);
-setInterval(updateTokenStatus,   30000);
+setInterval(updateTokenStatus,   5000);
 </script>

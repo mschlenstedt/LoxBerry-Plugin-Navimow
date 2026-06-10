@@ -154,27 +154,37 @@ sub action_restart {
 }
 
 sub action_gettokenstatus {
+    # Read base_topic from config to build the gateway MQTT topic
     my $cfg = {};
     if (-f $plugin_cfg) {
         local $/;
-        open(my $fh, '<', $plugin_cfg) or do {
-            print encode_json({ ok => 0, error => 'Cannot read config' });
-            return;
-        };
-        eval { $cfg = decode_json(<$fh>); };
+        if (open(my $fh, '<', $plugin_cfg)) {
+            eval { $cfg = decode_json(<$fh>); };
+        }
+    }
+    my $base_topic  = $cfg->{base_topic}   // 'navimow';
+    my $has_refresh = ($cfg->{refresh_token} // '') ne '' ? 1 : 0;
+
+    # Auth status is published retained by the gateway to {base_topic}/gateway
+    my $raw = LoxBerry::IO::mqtt_get("$base_topic/gateway");
+
+    unless (defined $raw && $raw ne '') {
+        # Gateway not yet running or has never published
+        print encode_json({ ok => 0, has_refresh => $has_refresh,
+                            expires_in => 0, masked => '' });
+        return;
     }
 
-    my $token         = $cfg->{access_token}  // '';
-    my $refresh_token = $cfg->{refresh_token} // '';
-    my $expires_at    = $cfg->{expires_at}    // 0;
+    my $data = eval { decode_json($raw) } // {};
+    my $authenticated = $data->{authenticated} ? 1 : 0;
+    my $expires_at    = $data->{expires_at}    // 0;
+    my $masked        = $data->{token_masked}  // '';
     my $now           = time();
-    my $valid         = ($token ne '' && $expires_at > $now) ? 1 : 0;
-    my $expires_in    = $expires_at > $now ? $expires_at - $now : 0;
-    my $has_refresh   = ($refresh_token ne '') ? 1 : 0;
+    my $expires_in    = ($expires_at > $now) ? int($expires_at - $now) : 0;
 
     print encode_json({
-        ok          => $valid,
-        masked      => $token,
+        ok          => $authenticated,
+        masked      => $masked,
         expires_in  => $expires_in+0,
         has_refresh => $has_refresh,
     });
