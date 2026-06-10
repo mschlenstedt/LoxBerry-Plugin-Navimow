@@ -402,16 +402,22 @@ def _extract_vehicle_status_fields(dev: dict) -> dict:
         fields["battery_desc"] = str(desc)
 
     err = dev.get("errorCode") or dev.get("error_code")
-    if err not in (None, "", "none"):
-        fields["error_code"] = str(err)
+    fields["error_code"] = str(err) if err not in (None, "", "none") else -1
 
     if dev.get("action") is not None:
         fields["action"] = dev["action"]
 
-    for key in ("mowingWeekArea", "subtotalArea", "currentMowProgress",
-                "currentMowBoundary", "mowStartType", "mapWorkPosition"):
+    for key in ("mowingWeekArea", "subtotalArea", "currentMowBoundary",
+                "mowStartType", "mapWorkPosition"):
         if dev.get(key) is not None:
             fields[key] = dev[key]
+
+    raw_prog = dev.get("currentMowProgress")
+    if raw_prog is not None:
+        try:
+            fields["currentMowProgress"] = round(float(raw_prog) / 100, 2)
+        except (TypeError, ValueError):
+            fields["currentMowProgress"] = raw_prog
 
     return {k: v for k, v in fields.items() if v is not None}
 
@@ -502,10 +508,15 @@ def _on_cloud_message(device_id: str, channel: str, payload: bytes) -> None:
             if msg_type == 2:
                 # Mowing statistics — merge into state
                 state_upd: dict = {}
-                for key in ("action", "currentMowBoundary", "currentMowProgress",
-                            "mapWorkPosition", "mowStartType"):
+                for key in ("action", "currentMowBoundary", "mapWorkPosition", "mowStartType"):
                     if entry.get(key) is not None:
                         state_upd[key] = entry[key]
+                raw_prog = entry.get("currentMowProgress")
+                if raw_prog is not None:
+                    try:
+                        state_upd["currentMowProgress"] = round(float(raw_prog) / 100, 2)
+                    except (TypeError, ValueError):
+                        state_upd["currentMowProgress"] = raw_prog
                 for key in ("mowingWeekArea", "subtotalArea"):
                     v = entry.get(key)
                     if v is not None:
