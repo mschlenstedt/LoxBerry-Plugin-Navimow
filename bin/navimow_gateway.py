@@ -528,8 +528,11 @@ def _on_cloud_message(device_id: str, channel: str, payload: bytes) -> None:
                 loc["mowingPercentage"] = state_upd.get("mowingPercentage", pct)
             if entry.get("time") is not None:
                 loc["time"] = entry["time"]
-            _location_queue.put_nowait({"device_id": device_id, "data": loc})
-            LOGDEB(f"Location queued for {device_id}")
+            if loc:
+                _location_queue.put_nowait({"device_id": device_id, "data": loc})
+                LOGDEB(f"Location queued for {device_id}")
+            else:
+                LOGDEB(f"Location skipped for {device_id} — empty payload")
         except asyncio.QueueFull:
             pass
         except Exception as e:
