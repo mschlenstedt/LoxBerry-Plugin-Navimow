@@ -428,6 +428,33 @@ _state_publish_queue: asyncio.Queue  = asyncio.Queue(maxsize=64)
 _location_queue:      asyncio.Queue  = asyncio.Queue(maxsize=64)
 _event_queue:         asyncio.Queue  = asyncio.Queue(maxsize=64)
 
+# Default values for all known state fields — published when the real value is
+# not yet available (e.g. mowing fields before the first mowing session after restart).
+_STATE_DEFAULTS: dict = {
+    "vehicleState_desc":  "unknown",
+    "state_code":         99,
+    "battery":            -1,
+    "battery_desc":       "UNKNOWN",
+    "error_code":         -1,
+    "vehicleState":       -1,
+    "mowingPercentage":   -1,
+    "action":             -1,
+    "currentMowProgress": -1.0,
+    "mowingWeekArea":     -1.0,
+    "subtotalArea":       -1.0,
+    "currentMowBoundary": -1,
+    "mowStartType":       -1,
+    "mapWorkPosition":    "",
+}
+
+_LOCATION_DEFAULTS: dict = {
+    "postureX":         -1.0,
+    "postureY":         -1.0,
+    "postureTheta":     -1.0,
+    "mowingPercentage": -1,
+    "time":             0,
+}
+
 # Auth status — published retained to {base_topic}/gateway, read by WebUI via mqtt_get
 _auth_payload: dict = {}
 _auth_dirty:   bool = False
@@ -764,14 +791,13 @@ async def task_navimow_to_mqtt(
                             break
 
                     for did in to_publish:
-                        state = _device_state.get(did)
-                        if state:
-                            await lbmqtt.publish(
-                                f"{base_topic}/{did}/state",
-                                json.dumps(state), retain=True
-                            )
-                            LOGDEB(f"Published state for {did}: "
-                                   f"{state.get('vehicleState_desc', '?')}")
+                        state = {**_STATE_DEFAULTS, **_device_state.get(did, {})}
+                        await lbmqtt.publish(
+                            f"{base_topic}/{did}/state",
+                            json.dumps(state), retain=True
+                        )
+                        LOGDEB(f"Published state for {did}: "
+                               f"{state.get('vehicleState_desc', '?')}")
 
                     while not _location_queue.empty():
                         try:
@@ -1086,6 +1112,16 @@ async def main() -> None:
                                   f"fw={mower_info.get('firmware')}")
                 except Exception as e:
                     LOGWARN(f"Could not publish mower info: {e}")
+
+        # Seed state and location queues with defaults for every known device so
+        # the broker immediately has all fields on startup (before cloud data arrives).
+        for _dev in plugin_cfg.get("devices", []):
+            _did = _dev["device_id"]
+            _update_state(_did, {})
+            try:
+                _location_queue.put_nowait({"device_id": _did, "data": dict(_LOCATION_DEFAULTS)})
+            except asyncio.QueueFull:
+                pass
 
         # Create cloud MQTT client (replaces NavimowSDK)
         cloud_mqtt = None
