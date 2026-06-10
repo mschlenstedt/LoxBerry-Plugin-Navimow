@@ -348,7 +348,8 @@ def _patch_sdk_for_location(sdk: "NavimowSDK", device_ids: list) -> None:
         _orig_subscribe_all(product_key, device_name)
         for did in device_ids:
             mqtt_client.client.subscribe(f"/downlink/vehicle/{did}/realtimeDate/location")
-        LOGINF(f"Subscribed to location topics for {len(device_ids)} device(s)")
+            mqtt_client.client.subscribe(f"/downlink/vehicle/{did}/#")
+        LOGINF(f"Subscribed to location+wildcard topics for {len(device_ids)} device(s)")
 
     mqtt_client.subscribe_all = _subscribe_all_with_location
 
