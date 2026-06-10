@@ -540,7 +540,24 @@ def _patch_sdk_mqtt(sdk: "NavimowSDK", device_ids: list) -> None:
         parts = topic.strip("/").split("/")
         channel = parts[4] if len(parts) >= 5 else None
 
-        if channel == "location":
+        if channel in ("state", "attributes"):
+            # Parse raw MQTT payload and extract ALL available fields.
+            # The SDK only surfaces a small subset; everything else (action,
+            # mowingWeekArea, subtotalArea, signalStrength, mapWorkPosition …)
+            # is only available in the raw payload.
+            try:
+                raw = json.loads(payload.decode("utf-8", "replace"))
+                if isinstance(raw, list) and raw:
+                    raw = raw[-1]
+                if isinstance(raw, dict) and raw:
+                    fields = _extract_vehicle_status_fields(raw)
+                    if fields:
+                        _update_state(device_id, fields)
+                        LOGDEB(f"MQTT {channel} raw fields for {device_id}: {list(fields.keys())}")
+            except Exception as e:
+                LOGWARN(f"MQTT {channel} raw parse error: {e}")
+
+        elif channel == "location":
             try:
                 raw = json.loads(payload.decode("utf-8", "replace"))
                 # Cloud sends a JSON array; take the last (most recent) entry
