@@ -495,44 +495,75 @@ def _on_cloud_message(device_id: str, channel: str, payload: bytes) -> None:
             LOGWARN(f"MQTT {channel} parse error: {e}")
 
     elif channel == "location":
+        # The cloud sends two location message types:
+        #   type=1 — GPS position: postureX/Y/Theta, vehicleState
+        #   type=2 — Mowing statistics: action, mowingWeekArea, subtotalArea,
+        #            currentMowProgress, currentMowBoundary, mowStartType, mapWorkPosition
         try:
             raw = json.loads(payload.decode("utf-8", "replace"))
             entry = (raw[-1] if isinstance(raw, list) and raw
                      else raw if isinstance(raw, dict) else {})
 
-            state_upd: dict = {}
-            vs = entry.get("vehicleState")
-            if vs is not None:
-                try:
-                    state_upd["vehicleState"] = int(vs)
-                except (TypeError, ValueError):
-                    state_upd["vehicleState"] = vs
-            pct = entry.get("mowingPercentage")
-            if pct is not None:
-                try:
-                    state_upd["mowingPercentage"] = int(pct)
-                except (TypeError, ValueError):
-                    state_upd["mowingPercentage"] = pct
-            if state_upd:
-                _update_state(device_id, state_upd)
+            msg_type = entry.get("type", 1)
 
-            loc: dict = {}
-            for key in ("postureX", "postureY", "postureTheta"):
-                v = entry.get(key)
-                if v is not None:
+            if msg_type == 2:
+                # Mowing statistics — merge into state
+                state_upd: dict = {}
+                for key in ("action", "currentMowBoundary", "currentMowProgress",
+                            "mapWorkPosition", "mowStartType"):
+                    if entry.get(key) is not None:
+                        state_upd[key] = entry[key]
+                for key in ("mowingWeekArea", "subtotalArea"):
+                    v = entry.get(key)
+                    if v is not None:
+                        try:
+                            state_upd[key] = float(v)
+                        except (TypeError, ValueError):
+                            state_upd[key] = v
+                pct = entry.get("mowingPercentage")
+                if pct is not None:
                     try:
-                        loc[key] = float(v)
+                        state_upd["mowingPercentage"] = int(pct)
                     except (TypeError, ValueError):
-                        loc[key] = v
-            if pct is not None:
-                loc["mowingPercentage"] = state_upd.get("mowingPercentage", pct)
-            if entry.get("time") is not None:
-                loc["time"] = entry["time"]
-            if loc:
-                _location_queue.put_nowait({"device_id": device_id, "data": loc})
-                LOGDEB(f"Location queued for {device_id}")
+                        state_upd["mowingPercentage"] = pct
+                if state_upd:
+                    _update_state(device_id, state_upd)
+                    LOGDEB(f"Location type=2 → state for {device_id}: {list(state_upd.keys())}")
             else:
-                LOGDEB(f"Location skipped for {device_id} — empty payload")
+                # type=1 — GPS position
+                state_upd = {}
+                vs = entry.get("vehicleState")
+                if vs is not None:
+                    try:
+                        state_upd["vehicleState"] = int(vs)
+                    except (TypeError, ValueError):
+                        state_upd["vehicleState"] = vs
+                pct = entry.get("mowingPercentage")
+                if pct is not None:
+                    try:
+                        state_upd["mowingPercentage"] = int(pct)
+                    except (TypeError, ValueError):
+                        state_upd["mowingPercentage"] = pct
+                if state_upd:
+                    _update_state(device_id, state_upd)
+
+                loc: dict = {}
+                for key in ("postureX", "postureY", "postureTheta"):
+                    v = entry.get(key)
+                    if v is not None:
+                        try:
+                            loc[key] = float(v)
+                        except (TypeError, ValueError):
+                            loc[key] = v
+                if pct is not None:
+                    loc["mowingPercentage"] = state_upd.get("mowingPercentage", pct)
+                if entry.get("time") is not None:
+                    loc["time"] = entry["time"]
+                if loc:
+                    _location_queue.put_nowait({"device_id": device_id, "data": loc})
+                    LOGDEB(f"Location queued for {device_id}")
+                else:
+                    LOGDEB(f"Location skipped for {device_id} — empty payload")
         except asyncio.QueueFull:
             pass
         except Exception as e:
