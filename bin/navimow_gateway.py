@@ -311,6 +311,7 @@ async def rest_init(
 # ── Task 7: Navimow MQTT → LoxBerry MQTT ─────────────────────────────────────
 _state_queue: asyncio.Queue = asyncio.Queue()
 _attributes_queue: asyncio.Queue = asyncio.Queue()
+_location_queue: asyncio.Queue = asyncio.Queue()
 
 
 def _on_navimow_state(msg: "DeviceStateMessage") -> None:
@@ -327,6 +328,45 @@ def _on_navimow_attributes(msg: "DeviceAttributesMessage") -> None:
         _attributes_queue.put_nowait(msg)
     except asyncio.QueueFull:
         pass
+
+
+def _patch_sdk_for_location(sdk: "NavimowSDK", device_ids: list) -> None:
+    """Extend NavimowSDK to subscribe to and forward the location topic.
+
+    The SDK only subscribes to state/event/attributes. The location topic
+    (/downlink/vehicle/{id}/realtimeDate/location) carries postureX/Y,
+    mowingPercentage etc. and is the source of real-time position data.
+    We patch subscribe_all and on_message on the internal NavimowMQTT
+    instance before connect() is called.
+    """
+    mqtt_client = sdk._mqtt
+
+    # 1. Extend subscribe_all to also subscribe to location
+    _orig_subscribe_all = mqtt_client.subscribe_all
+
+    def _subscribe_all_with_location(product_key: str, device_name: str) -> None:
+        _orig_subscribe_all(product_key, device_name)
+        for did in device_ids:
+            mqtt_client.client.subscribe(f"/downlink/vehicle/{did}/realtimeDate/location")
+        LOGINF(f"Subscribed to location topics for {len(device_ids)} device(s)")
+
+    mqtt_client.subscribe_all = _subscribe_all_with_location
+
+    # 2. Wrap on_message to intercept location channel before SDK discards it
+    _orig_on_message = mqtt_client.on_message
+
+    async def _on_message_with_location(topic: str, payload: bytes, device_id: str) -> None:
+        parts = topic.strip("/").split("/")
+        if len(parts) >= 5 and parts[4] == "location":
+            try:
+                loc_data = json.loads(payload.decode("utf-8", "replace"))
+                _location_queue.put_nowait({"device_id": device_id, "data": loc_data})
+                LOGDEB(f"Location message queued for {device_id}")
+            except Exception as e:
+                LOGWARN(f"Location message parse error: {e}")
+        await _orig_on_message(topic, payload, device_id)
+
+    mqtt_client.on_message = _on_message_with_location
 
 
 async def task_navimow_to_mqtt(
@@ -385,6 +425,20 @@ async def task_navimow_to_mqtt(
                             break
                         except Exception as e:
                             LOGWARN(f"Attributes publish error: {e}")
+
+                    # Drain location queue every loop cycle
+                    while not _location_queue.empty():
+                        try:
+                            loc = _location_queue.get_nowait()
+                            await lbmqtt.publish(
+                                f"{base_topic}/{loc['device_id']}/location",
+                                json.dumps(loc["data"]), retain=True
+                            )
+                            LOGDEB(f"Published location for {loc['device_id']}")
+                        except asyncio.QueueEmpty:
+                            break
+                        except Exception as e:
+                            LOGWARN(f"Location publish error: {e}")
 
         except Exception as e:
             if not shutdown.is_set():
@@ -690,6 +744,7 @@ async def main() -> None:
             )
             navimow_sdk.on_state(_on_navimow_state_tracked)
             navimow_sdk.on_attributes(_on_navimow_attributes)
+            _patch_sdk_for_location(navimow_sdk, [d["device_id"] for d in plugin_cfg.get("devices", [])])
             navimow_sdk.connect()
             LOGINF("NavimowSDK connected to cloud MQTT")
         else:
