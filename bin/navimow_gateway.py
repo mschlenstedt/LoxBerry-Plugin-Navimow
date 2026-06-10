@@ -401,13 +401,6 @@ def _extract_vehicle_status_fields(dev: dict) -> dict:
     if desc:
         fields["battery_desc"] = str(desc)
 
-    sig = dev.get("signalStrength") or dev.get("signal_strength")
-    if sig is not None:
-        try:
-            fields["signal"] = int(round(float(sig)))
-        except (TypeError, ValueError):
-            pass
-
     err = dev.get("errorCode") or dev.get("error_code")
     if err not in (None, "", "none"):
         fields["error_code"] = str(err)
