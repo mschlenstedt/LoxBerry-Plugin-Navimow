@@ -51,7 +51,7 @@ function updateTokenStatus() {
             const val     = document.getElementById('token_value');
             const expires = document.getElementById('token_expires');
             if (!badge) return;
-            val.textContent = data.masked || '--';
+            val.textContent = data.token || '--';
             if (data.ok) {
                 badge.textContent = '<TMPL_VAR "TOKEN.AUTHENTICATED">';
                 badge.className   = 'lb-badge lb-badge-success';

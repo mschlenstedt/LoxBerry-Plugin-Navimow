@@ -438,13 +438,12 @@ def _update_auth_status(plugin_cfg: dict, base_topic: str) -> None:
     global _auth_dirty
     token      = plugin_cfg.get("access_token", "")
     expires_at = plugin_cfg.get("expires_at", 0)
-    masked     = (token[:4] + "..." + token[-4:]) if len(token) > 8 else ("***" if token else "")
     _auth_payload.clear()
     _auth_payload.update({
-        "topic":   f"{base_topic}/gateway",
+        "topic":         f"{base_topic}/gateway",
         "authenticated": bool(token and expires_at > time.time()),
         "expires_at":    expires_at,
-        "token_masked":  masked,
+        "token":         token,
     })
     _auth_dirty = True
 

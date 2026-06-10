@@ -15,16 +15,43 @@
 </div>
 
 <div class="lb-section-title" style="margin-top:2rem;"><TMPL_VAR "MQTT.TOPIC_SCHEMA"></div>
-<table class="lb-table" style="font-family:monospace; font-size:0.9em;">
-  <thead><tr><th>Topic</th><th>Direction</th><th>Description</th></tr></thead>
+<table class="lb-table" style="font-size:0.9em;">
+  <thead><tr><th>Topic</th><th>Richtung</th><th>Retain</th><th>Felder</th></tr></thead>
   <tbody>
-    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/state</td>
-        <td>OUT</td><td>JSON: state, state_num, battery, error, error_num</td></tr>
-    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/command_result</td>
-        <td>OUT</td><td>JSON: command, result, result_num, reason, reason_num</td></tr>
-    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set</td>
-        <td>IN</td><td>start | pause | dock</td></tr>
-    <tr><td><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set/blade_height</td>
-        <td>IN</td><td>Integer 1&ndash;7</td></tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/state</td>
+      <td>OUT</td><td>&#10003;</td>
+      <td>vehicleState_desc, state_code, battery, battery_desc, signal, error_code, action, mowingWeekArea, subtotalArea, currentMowProgress, currentMowBoundary, mowStartType, mapWorkPosition, vehicleState (numeric), mowingPercentage</td>
+    </tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/location</td>
+      <td>OUT</td><td>&#10003;</td>
+      <td>postureX, postureY, postureTheta, mowingPercentage, time</td>
+    </tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/mower</td>
+      <td>OUT</td><td>&#10003;</td>
+      <td>id, name, model, firmware &mdash; statisch, bleibt nach Gateway-Neustart erhalten</td>
+    </tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/event</td>
+      <td>OUT</td><td>&mdash;</td>
+      <td>Rohe Cloud-Events (JSON)</td>
+    </tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set</td>
+      <td>IN</td><td>&mdash;</td>
+      <td>start &nbsp;|&nbsp; pause &nbsp;|&nbsp; resume &nbsp;|&nbsp; dock &nbsp;|&nbsp; stop</td>
+    </tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/command_result</td>
+      <td>OUT</td><td>&mdash;</td>
+      <td>command, result, result_num, reason</td>
+    </tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/gateway</td>
+      <td>OUT</td><td>&#10003;</td>
+      <td>authenticated, expires_at, token &mdash; Gateway-Authentifizierungsstatus</td>
+    </tr>
   </tbody>
 </table>

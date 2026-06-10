@@ -178,13 +178,13 @@ sub action_gettokenstatus {
     my $data = eval { decode_json($raw) } // {};
     my $authenticated = $data->{authenticated} ? 1 : 0;
     my $expires_at    = $data->{expires_at}    // 0;
-    my $masked        = $data->{token_masked}  // '';
+    my $token         = $data->{token}         // '';
     my $now           = time();
     my $expires_in    = ($expires_at > $now) ? int($expires_at - $now) : 0;
 
     print encode_json({
         ok          => $authenticated,
-        masked      => $masked,
+        token       => $token,
         expires_in  => $expires_in+0,
         has_refresh => $has_refresh,
     });
