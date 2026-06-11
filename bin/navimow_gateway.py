@@ -586,15 +586,20 @@ def _on_cloud_message(device_id: str, channel: str, payload: bytes) -> None:
                             loc[key] = float(v)
                         except (TypeError, ValueError):
                             loc[key] = v
-                if pct is not None:
-                    loc["mowingPercentage"] = state_upd.get("mowingPercentage", pct)
-                if entry.get("time") is not None:
-                    loc["time"] = entry["time"]
-                if loc:
+                # Only a real GPS position is allowed to overwrite the retained
+                # location topic. The cloud also sends time-only heartbeats
+                # ({"time": ...} with no posture); publishing those retained would
+                # wipe the last valid position. Skip them → keep last good value.
+                has_position = any(k in loc for k in ("postureX", "postureY", "postureTheta"))
+                if has_position:
+                    if pct is not None:
+                        loc["mowingPercentage"] = state_upd.get("mowingPercentage", pct)
+                    if entry.get("time") is not None:
+                        loc["time"] = entry["time"]
                     _location_queue.put_nowait({"device_id": device_id, "data": loc})
                     LOGDEB(f"Location queued for {device_id}")
                 else:
-                    LOGDEB(f"Location skipped for {device_id} — empty payload")
+                    LOGDEB(f"Location skipped for {device_id} — no GPS posture, keeping last retained value")
         except asyncio.QueueFull:
             pass
         except Exception as e:
