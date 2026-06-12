@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import re
 import signal
@@ -45,7 +46,9 @@ _logger.propagate = False
 _logger.setLevel(logging.DEBUG)
 
 _handler = (
-    logging.FileHandler(_logfile, mode="a", encoding="utf-8")
+    # WatchedFileHandler: legt die Logdatei neu an, falls sie unter dem Prozess
+    # weggelöscht/rotiert wird (Inode-Wechsel) — schreibt nie ins gelöschte Inode.
+    logging.handlers.WatchedFileHandler(_logfile, mode="a", encoding="utf-8")
     if _logfile
     else logging.StreamHandler(sys.stdout)
 )
