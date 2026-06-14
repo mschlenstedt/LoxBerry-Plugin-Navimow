@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 ARGV0=$0 # Zero argument is shell command
 ARGV1=$1 # First argument is temp folder during install
@@ -6,6 +6,15 @@ ARGV2=$2 # Second argument is Plugin-Name for scipts etc.
 ARGV3=$3 # Third argument is Plugin installation folder
 ARGV4=$4 # Forth argument is Plugin version
 ARGV5=$5 # Fifth argument is Base folder of LoxBerry
+
+# Stop a running gateway before the upgrade. preroot.sh (root) is the reliable
+# stop; this is the matching loxberry-context stop (parity with Dreame).
+PIDFILE="/dev/shm/navimow_gateway.pid"
+if [ -f "$PIDFILE" ]; then
+    echo "<INFO> Stopping running gateway before upgrade"
+    kill "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+fi
 
 echo "<INFO> Creating temporary folders for upgrading"
 mkdir -p /tmp/$ARGV1\_upgrade
