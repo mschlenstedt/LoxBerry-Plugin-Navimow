@@ -12,13 +12,11 @@ fi
 
 ACTION="${1:-start}"
 
-PLUGIN_FOLDER=$(grep -A5 "NAME=$PLUGINNAME" "${LBHOMEDIR}/data/system/plugindatabase.dat" \
-    | grep "^FOLDER=" | head -1 | cut -d= -f2)
-
-if [ -z "$PLUGIN_FOLDER" ]; then
-    logger "Navimow: could not find plugin folder in plugindatabase.dat"
-    exit 1
-fi
+# The daemon file is named exactly after the plugin folder, so derive it from
+# our own path. The old plugindatabase.dat lookup fails: that file is pipe-
+# delimited (or empty of data lines) and never matched NAME=/FOLDER= patterns,
+# leaving PLUGIN_FOLDER empty -> exit 1 -> gateway never started at boot.
+PLUGIN_FOLDER=$(basename "$0")
 
 LBPBINDIR="${LBHOMEDIR}/bin/plugins/${PLUGIN_FOLDER}"
 LBPCONFIGDIR="${LBHOMEDIR}/config/plugins/${PLUGIN_FOLDER}"
