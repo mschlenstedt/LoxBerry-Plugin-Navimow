@@ -404,6 +404,22 @@ def _extract_vehicle_status_fields(dev: dict) -> dict:
     if desc:
         fields["battery_desc"] = str(desc)
 
+    # Beim Hochfahren ('update') und beim Selbsttest ('selfcheck') meldet die Cloud
+    # Batterie 0 / CRITICALLY_LOW, während das Gerät real z.B. bei 90 % steht — ein
+    # Platzhalter, kein Messwert. Ungefiltert wandert daraus ein Batteriealarm nach
+    # Loxone. Nur diese eine Kombination wird verworfen; eine echte 0 in jedem
+    # anderen Zustand bleibt erhalten.
+    if fields.get("vehicleState_desc") in ("update", "selfcheck"):
+        if fields.get("battery") == 0:
+            fields.pop("battery", None)
+        # Achtung: fields["battery"] wird oben auch auf None gesetzt, wenn die
+        # Nutzlast gar keinen Wert enthält — 'not in' greift hier also nicht.
+        if fields.get("battery") is None:
+            # Beschreibung ohne zugehörigen Wert ist in dieser Phase ebenfalls
+            # Platzhalter (CRITICALLY_LOW / UNKNOWN) und würde sonst am zuletzt
+            # gemergten echten Prozentwert kleben bleiben.
+            fields.pop("battery_desc", None)
+
     err = dev.get("errorCode") or dev.get("error_code")
     fields["error_code"] = str(err) if err not in (None, "", "none") else -1
 
@@ -515,6 +531,10 @@ def _on_cloud_message(device_id: str, channel: str, payload: bytes) -> None:
 
     if channel in ("state", "attributes"):
         try:
+            # Rohpayload nur auf Loglevel 7 — die Cloud schickt je nach Zustand
+            # unterschiedliche Feldsätze, ohne das Original ist nicht zu klären,
+            # warum ein Wert so aussieht, wie er aussieht.
+            LOGDEB(f"MQTT {channel} raw: {payload[:400]!r}")
             raw = json.loads(payload.decode("utf-8", "replace"))
             if isinstance(raw, list) and raw:
                 raw = raw[-1]
@@ -1074,7 +1094,13 @@ async def task_cloud_mqtt_watchdog(
                     raw = dev.get(key)
                     if raw and not str(raw).lstrip("-").isdigit():
                         text, _ = _normalize_vehicle_state(str(raw))
-                        if text not in ("docked", "charging", "offline", "unknown"):
+                        # 'update' und 'selfcheck' sind Startphasen, kein Mähbetrieb:
+                        # der Mäher streamt dabei nichts, und ohne sie hier stuft der
+                        # Watchdog die normale Funkstille als Fehler ein und wirft eine
+                        # gesunde Verbindung weg (live beobachtet: ein Reconnect nach
+                        # 179 s, während der Mäher nur seinen Selbsttest lief).
+                        if text not in ("docked", "charging", "offline", "unknown",
+                                        "update", "selfcheck"):
                             active = True
                         break
                 if active:
