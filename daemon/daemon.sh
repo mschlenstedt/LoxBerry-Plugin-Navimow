@@ -40,10 +40,19 @@ case "$ACTION" in
 
     mkdir -p "$LBPLOGDIR"
 
-    # Register log entry in LoxBerry log database and get filename + dbkey
+    # Register log entry in LoxBerry log database and get filename + dbkey.
+    #
+    # Zwei Dinge muessen hier stimmen, sonst taucht im Log-Manager der WebUI
+    # nichts auf (und der Boot-Start fiel still auf die Notfall-Logdatei ohne
+    # DB-Eintrag zurueck):
+    #   - package MUSS der reine Pluginordner sein ('navimow'). loglist_html()
+    #     sucht mit WHERE PACKAGE = '<ordner>'; ein voller Pfad findet nie etwas.
+    #   - logdir MUSS gesetzt sein. Die Auto-Erkennung von LoxBerry::Log leitet
+    #     das Verzeichnis aus $0 ab und funktioniert nur aus einem CGI heraus;
+    #     hier bricht sie mit "Cannot determine plugin log directory" ab.
     read LOGFILE LOGDBKEY < <(perl -e "
         use LoxBerry::Log;
-        my \$log = LoxBerry::Log->new(name => 'gateway', package => '${LBHOMEDIR}/data/plugins/${PLUGIN_FOLDER}', addtime => 1);
+        my \$log = LoxBerry::Log->new(name => 'gateway', package => '${PLUGIN_FOLDER}', logdir => '${LBPLOGDIR}', addtime => 1);
         \$log->LOGSTART('Navimow Gateway starting (boot)');
         print \$log->{filename} . ' ' . (\$log->{dbkey} // 0) . \"\n\";
     ")
