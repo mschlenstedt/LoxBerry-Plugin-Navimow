@@ -26,7 +26,9 @@ _ap.add_argument("--logfile",   default="")
 _ap.add_argument("--logdbkey",  default="")
 _ap.add_argument("--configdir", default="")
 _ap.add_argument("--lbsconfig", default="/opt/loxberry/config/system")
-_ap.add_argument("--loglevel",  type=int, default=6)
+# Fallback 7 wie LoxBerry::Log, wenn in der Plugin-Datenbank kein Level steht.
+# Im Normalbetrieb übergeben daemon.sh und ajax.cgi den dort eingestellten Wert.
+_ap.add_argument("--loglevel",  type=int, default=7)
 _args, _ = _ap.parse_known_args()
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -36,6 +38,9 @@ CONFIGDIR    = Path(_args.configdir) if _args.configdir else Path(LBHOMEDIR) / "
 GENERAL_JSON = LBSCONFIG / "general.json"
 PLUGIN_CFG   = CONFIGDIR / "pluginconfig.json"
 PID_FILE     = Path("/dev/shm/navimow_gateway.pid")
+# Pluginordner nie hartkodieren — er steht im Pfad, den der Aufrufer übergibt.
+PLUGIN_FOLDER = CONFIGDIR.name
+PLUGINDB      = Path(LBHOMEDIR) / "data/system/plugindatabase.json"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 _loglevel = _args.loglevel
@@ -60,7 +65,10 @@ _logger.addHandler(_handler)
 
 
 def _log(level: int, levelname: str, msg: str) -> None:
-    if level <= _loglevel:
+    # level < 0 wird immer geschrieben — dieselbe Konvention wie LoxBerry::Log,
+    # damit Sitzungsanfang/-ende auch bei niedrigem Loglevel im Log-Manager
+    # sichtbar bleiben und die Sitzung nicht als leere Datei erscheint.
+    if level < 0 or level <= _loglevel:
         record = logging.LogRecord(
             name=_logger.name, level=logging.DEBUG,
             pathname="", lineno=0, msg=msg, args=(), exc_info=None,
@@ -69,12 +77,31 @@ def _log(level: int, levelname: str, msg: str) -> None:
         _handler.emit(record)
 
 
-def LOGSTART(msg: str) -> None: _log(5, "OK",    msg)
+def LOGSTART(msg: str) -> None: _log(-1, "OK",   msg)
 def LOGERR(msg: str)   -> None: _log(3, "ERR",   msg)
 def LOGWARN(msg: str)  -> None: _log(4, "WARN",  msg)
 def LOGOK(msg: str)    -> None: _log(5, "OK",    msg)
 def LOGINF(msg: str)   -> None: _log(6, "INFO",  msg)
 def LOGDEB(msg: str)   -> None: _log(7, "DEBUG", msg)
+
+
+def _plugindb_loglevel() -> int:
+    """Der in der WebUI eingestellte Loglevel, oder -1 wenn nicht ermittelbar.
+
+    Gelesen wird ausschließlich die Plugin-Datenbank (lesend, wie es auch
+    LoxBerry::System::pluginloglevel tut). Die Log-Datenbank wird nicht angefasst
+    — dafür ist allein die Perl-Bibliothek zuständig.
+    """
+    try:
+        with open(PLUGINDB, encoding="utf-8") as f:
+            plugins = (json.load(f) or {}).get("plugins") or {}
+        for entry in plugins.values():
+            if isinstance(entry, dict) and entry.get("folder") == PLUGIN_FOLDER:
+                level = entry.get("loglevel")
+                return int(level) if str(level).strip() != "" else -1
+    except Exception:
+        pass
+    return -1
 
 
 def _logend() -> None:
@@ -1116,6 +1143,27 @@ async def task_cloud_mqtt_watchdog(
             LOGOK("Cloud MQTT reconnected by watchdog")
 
 
+# ── Task 12: Loglevel aus der WebUI nachziehen ────────────────────────────────
+async def task_loglevel_watch(shutdown: asyncio.Event) -> None:
+    """Übernimmt eine Loglevel-Änderung aus der WebUI ohne Neustart.
+
+    LoxBerry::Log macht dasselbe für die Perl-Seite (Prüfung im Minutentakt).
+    Übernommen wird nur, wenn sich der Wert in der Datenbank *ändert* — ein von
+    Hand mitgegebenes --loglevel (Fehlersuche) bleibt sonst erhalten.
+    """
+    global _loglevel
+    last_seen = _plugindb_loglevel()
+    while not shutdown.is_set():
+        await asyncio.sleep(60)
+        if shutdown.is_set():
+            break
+        current = _plugindb_loglevel()
+        if current < 0 or current == last_seen:
+            continue
+        old, _loglevel, last_seen = _loglevel, current, current
+        _log(-1, "INFO", f"User changed loglevel from {old} to {current}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 async def main() -> None:
     LOGSTART("Navimow Gateway starting")
@@ -1220,6 +1268,9 @@ async def main() -> None:
             ),
             asyncio.create_task(
                 task_cloud_mqtt_watchdog(cloud_mqtt, session, plugin_cfg, _shutdown_event)
+            ),
+            asyncio.create_task(
+                task_loglevel_watch(_shutdown_event)
             ),
         ]
 

@@ -94,7 +94,7 @@ sub action_restart {
     my $lbsconf = "$lbhomedir/config/system";
 
     # Register log entry in LoxBerry log database so loglist_html() finds it
-    my ($logfile, $logdbkey);
+    my ($logfile, $logdbkey, $loglevel);
     eval {
         my $log = LoxBerry::Log->new(
             name    => 'gateway',
@@ -104,9 +104,14 @@ sub action_restart {
         $log->LOGSTART("Navimow Gateway starting");
         $logfile  = $log->{filename};
         $logdbkey = $log->{dbkey} // 0;
+        # Den in der WebUI eingestellten Loglevel holt LoxBerry::Log selbst aus
+        # der Plugin-Datenbank; wir reichen genau diesen Wert an den Gateway
+        # weiter, damit Perl- und Python-Logs demselben Level folgen.
+        $loglevel = $log->loglevel;
     };
     $logfile  //= "$lbplogdir/navimow_gateway.log";
     $logdbkey //= 0;
+    $loglevel //= 7;
 
     unless (-f $gateway) {
         print encode_json({ ok => 0, error => "Gateway not found: $gateway" });
@@ -132,6 +137,7 @@ sub action_restart {
                 '--logdbkey',  $logdbkey,
                 '--configdir', $lbpconfigdir,
                 '--lbsconfig', $lbsconf,
+                '--loglevel',  $loglevel,
             ) or exit 1;
         }
         exit 0;

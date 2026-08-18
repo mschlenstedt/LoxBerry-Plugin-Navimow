@@ -50,23 +50,28 @@ case "$ACTION" in
     #   - logdir MUSS gesetzt sein. Die Auto-Erkennung von LoxBerry::Log leitet
     #     das Verzeichnis aus $0 ab und funktioniert nur aus einem CGI heraus;
     #     hier bricht sie mit "Cannot determine plugin log directory" ab.
-    read LOGFILE LOGDBKEY < <(perl -e "
+    # Der in der WebUI eingestellte Loglevel kommt aus dem Log-Objekt selbst
+    # (LoxBerry::Log liest PLUGINDB_LOGLEVEL aus der Plugin-Datenbank) und wird
+    # an den Gateway weitergereicht, damit Perl- und Python-Logs identisch filtern.
+    read LOGFILE LOGDBKEY LOGLEVEL < <(perl -e "
         use LoxBerry::Log;
         my \$log = LoxBerry::Log->new(name => 'gateway', package => '${PLUGIN_FOLDER}', logdir => '${LBPLOGDIR}', addtime => 1);
         \$log->LOGSTART('Navimow Gateway starting (boot)');
-        print \$log->{filename} . ' ' . (\$log->{dbkey} // 0) . \"\n\";
+        print \$log->{filename} . ' ' . (\$log->{dbkey} // 0) . ' ' . (\$log->loglevel // 7) . \"\n\";
     ")
 
     if [ -z "$LOGFILE" ]; then
         LOGFILE="${LBPLOGDIR}/navimow_gateway.log"
         LOGDBKEY="0"
     fi
+    [ -z "$LOGLEVEL" ] && LOGLEVEL=7
 
     python3 "$GATEWAY" \
         --logfile    "$LOGFILE" \
         --logdbkey   "$LOGDBKEY" \
         --configdir  "$LBPCONFIGDIR" \
         --lbsconfig  "$LBSCONFIG" \
+        --loglevel   "$LOGLEVEL" \
         &
 
     logger "Navimow: gateway started (PID $!)"
