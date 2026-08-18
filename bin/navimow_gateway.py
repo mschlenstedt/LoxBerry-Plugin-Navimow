@@ -477,7 +477,10 @@ def _update_auth_status(plugin_cfg: dict, base_topic: str) -> None:
     })
     _auth_dirty = True
 
-_last_cloud_msg_time: float = 0.0
+# Startwert = jetzt, nicht 0.0: sonst sieht der Silence-Watchdog beim ersten
+# Durchlauf "seit 1970 keine Nachricht" und reconnectet eine frische, gesunde
+# Verbindung sofort wieder weg. Wird zusätzlich bei jedem Connect zurückgesetzt.
+_last_cloud_msg_time: float = time.time()
 _last_activity:       float = 0.0
 _activity_refresh_due: bool = False
 
@@ -627,7 +630,15 @@ class NavimowCloudMQTT:
     The Authorization: Bearer token is injected on every WS upgrade.
     """
 
-    KEEPALIVE = 2400  # seconds — matches TA2k/ioBroker.navimow
+    # Sekunden erlaubter Funkstille, bis der Client dem Broker einen PINGREQ schuldet.
+    # 2400 (SDK-Wert) ist zu lang: eine leerlaufende Verbindung zur Navimow-Cloud wird
+    # nach ~10 min ohne FIN abgeräumt — der Client merkt das bei 2400 erst 40 min später
+    # (in ioBroker.navimow über zwei Tage am selben Broker gemessen: nach jedem Connect
+    # exakt zwei 5-Minuten-Heartbeats, dann Stille). Beim Mähen maskiert der
+    # 2-Sekunden-Positionsstrom das Problem, in der Ladestation nicht.
+    # 60 s: vier Bytes pro Minute, Verbindung fällt nie lange genug in den Leerlauf,
+    # und ein trotzdem toter Link fällt binnen zwei Minuten auf.
+    KEEPALIVE = 60  # seconds — matches TA2k/ioBroker.navimow
 
     def __init__(self, mqtt_host: str, mqtt_url: str,
                  username: str, password: str, token: str, device_ids: list):
@@ -688,10 +699,14 @@ class NavimowCloudMQTT:
             LOGWARN(f"Cloud MQTT connect failed rc={rc}")
             return
         LOGOK("Cloud MQTT connected")
+        # Verhindert, dass der Silence-Watchdog eine frische Verbindung sofort killt.
+        _touch_cloud_msg_time()
         for did in self._device_ids:
+            # Nur die vier gelesenen Kanäle, kein zusätzlicher Wildcard daneben:
+            # '/#' matcht dieselben Topics ein zweites Mal, und der Broker stellt
+            # dann pro passender Subscription einmal zu (doppelte Verarbeitung).
             for ch in ("state", "event", "attributes", "location"):
                 client.subscribe(f"/downlink/vehicle/{did}/realtimeDate/{ch}")
-            client.subscribe(f"/downlink/vehicle/{did}/#")
         LOGINF(f"Subscribed to cloud MQTT topics for {len(self._device_ids)} device(s)")
 
     def _cb_disconnect(self, client, userdata, rc):
@@ -711,8 +726,17 @@ class NavimowCloudMQTT:
     def connect(self, loop) -> None:
         self._loop = loop
         self.disconnect()
-        client_id = "navimow_loxberry_" + uuid.uuid4().hex[:10]
+        # Client-ID-Muster echter Clients: 'web_<mqtt-username>_<random>' — identisch
+        # zu mower_sdk (_build_web_client_id) und ioBroker.navimow. Mit einem anderen
+        # Präfix nimmt die Cloud die Verbindung an und bestätigt die Subscriptions,
+        # liefert aber keine Telemetrie aus.
+        client_id = "web_" + (self._username or "loxberry") + "_" + uuid.uuid4().hex[:10]
         client = self._make_client(client_id)
+        # Maskiert loggen — der MQTT-Username ist eine Kontokennung und landet
+        # sonst in Logs, die Nutzer ins Forum kopieren.
+        _u = self._username or "loxberry"
+        _u_masked = _u if len(_u) <= 4 else f"{_u[:2]}***{_u[-2:]}"
+        LOGINF(f"Cloud MQTT client-id: web_{_u_masked}_<random>")
         self._client = client
         try:
             client.connect(self._host, 443, keepalive=self.KEEPALIVE)
@@ -963,6 +987,14 @@ async def task_token_refresh(
         if ok:
             if cloud_mqtt:
                 cloud_mqtt.update_token(plugin_cfg["access_token"])
+                # Der Bearer-Token geht nur beim WS-Upgrade mit und bleibt für die
+                # Lebensdauer der Verbindung eingefroren. Ohne Reconnect läuft die
+                # Cloud-Verbindung mit dem abgelaufenen Token weiter und versiegt
+                # still (ioBroker.navimow macht beim Refresh dasselbe).
+                LOGINF("Reconnecting cloud MQTT with refreshed token")
+                cloud_mqtt.disconnect()
+                await asyncio.sleep(2)
+                cloud_mqtt.connect(asyncio.get_event_loop())
             _update_auth_status(plugin_cfg, base_topic)
 
 
