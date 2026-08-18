@@ -47,6 +47,15 @@ Abonniert: `<base>/+/set` — Payload ist ein Kommandowort. Erlaubt: `start`, `s
 
 `vehicleState_desc` (Text) und `state_code` (Zahl) kommen aus `_normalize_vehicle_state()`; unbekannte Cloud-Zustände landen auf `unknown`/`99` statt zu verschwinden.
 
+### `update` und `selfcheck` sind Startphasen, keine Betriebszustände
+
+Beim Hochfahren und beim Selbsttest verhält sich die Cloud anders, und beides ist erst aufgefallen, als der MQTT-Kanal überhaupt Daten lieferte:
+
+- **Batterie ist dort ein Platzhalter.** Gemeldet wird `battery: 0` / `CRITICALLY_LOW`, während das Gerät real bei 90 % steht. Ungefiltert wird daraus ein Batteriealarm in Loxone. `_extract_vehicle_status_fields()` verwirft deshalb genau diese Kombination — eine echte 0 in jedem anderen Zustand bleibt erhalten, ebenso ein plausibler REST-Wert während `update`. Zusätzlich fällt eine Beschreibung ohne zugehörigen Zahlenwert weg, sonst klebt `CRITICALLY_LOW` am zuletzt gemergten echten Prozentwert.
+- **Der Watchdog darf sie nicht als „aktiv" zählen.** Der Mäher streamt in diesen Phasen nichts; ohne Ausnahme wirft der Watchdog nach 120 s eine gesunde Verbindung weg (live beobachtet: Reconnect nach 179 s Selbsttest).
+
+Der `state`-Kanal schickt je nach Zustand **unterschiedliche Feldsätze** — die schmalste beobachtete Nutzlast ist `{"battery","device_id","state","timestamp"}`. Wer einen Wert erklären will, braucht das Rohpayload (Loglevel 7), nicht den gemergten State. Doppelte Nachrichten 1 ms auseinander sind normal.
+
 ## Laufzeit
 
 - **PID-File** `/dev/shm/navimow_gateway.pid`, vom Gateway selbst geschrieben.
