@@ -143,7 +143,7 @@ def load_general_config() -> dict:
     return _load_json(GENERAL_JSON)
 
 
-_EPHEMERAL_FIELDS = frozenset(("access_token", "expires_at", "token_type"))
+_EPHEMERAL_FIELDS = frozenset(("access_token", "expires_at", "token_type", "private_access_token"))
 
 
 def load_plugin_config() -> dict:
@@ -156,9 +156,25 @@ def load_plugin_config() -> dict:
     cfg.setdefault("base_topic",    "navimow")
     cfg.setdefault("refresh_token", "")
     cfg.setdefault("devices",       [])
+    # Private API (parallel zur offiziellen) — eigene Zugangsdaten/Session.
+    cfg.setdefault("private_enabled",         False)
+    cfg.setdefault("private_region",          "")
+    cfg.setdefault("private_uuid",            "")
+    cfg.setdefault("private_refresh_token",   "")
+    cfg.setdefault("private_uid",             "")
+    cfg.setdefault("private_host",            "")
+    cfg.setdefault("private_devices",         [])
+    dirty = "private_client_device_id" not in cfg
+    cfg.setdefault("private_client_device_id", uuid.uuid4().hex)
     # These live in memory only — never written to SD card
     cfg["access_token"] = ""
     cfg["expires_at"]   = 0
+    cfg["private_access_token"] = ""
+    if dirty:
+        # Muss sofort persistiert werden: die Geraete-ID muss ueber Neustarts
+        # stabil bleiben, sonst registriert sich jeder Neustart als neues
+        # Geraet bei der privaten Cloud (siehe NavimowPrivateClient-Docstring).
+        save_plugin_config(cfg)
     return cfg
 
 
