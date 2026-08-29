@@ -1,0 +1,5 @@
+"""Macht die flachen bin/-Module fuer alle Tests importierbar."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bin"))
