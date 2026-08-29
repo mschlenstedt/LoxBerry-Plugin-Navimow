@@ -14,11 +14,13 @@ echo "<INFO> Navimow: installing Python dependencies as root..."
 pip3 install --quiet \
     "aiomqtt>=2.0,<3.0" \
     "paho-mqtt>=1.6,<3.0" \
-    aiohttp 2>/dev/null \
+    aiohttp \
+    cryptography 2>/dev/null \
 || pip3 install --break-system-packages --quiet \
     "aiomqtt>=2.0,<3.0" \
     "paho-mqtt>=1.6,<3.0" \
-    aiohttp
+    aiohttp \
+    cryptography
 
 if [ $? -ne 0 ]; then
     echo "<FAIL> Navimow: pip3 install failed"
