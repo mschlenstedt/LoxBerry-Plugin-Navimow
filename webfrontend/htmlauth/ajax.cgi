@@ -2,6 +2,7 @@
 
 use strict;
 use warnings;
+use utf8;
 use CGI;
 use JSON;
 use IPC::Open2;
@@ -28,10 +29,10 @@ if ($action eq 'getpid') {
     action_stop();
 } elsif ($action eq 'gettokenstatus') {
     action_gettokenstatus();
-} elsif ($action eq 'privatelogin') {
-    action_privatelogin();
-} elsif ($action eq 'getprivatestatus') {
-    action_getprivatestatus();
+} elsif ($action eq 'unofficiallogin') {
+    action_unofficiallogin();
+} elsif ($action eq 'getunofficialstatus') {
+    action_getunofficialstatus();
 } else {
     print encode_json({ error => "Unknown action: $action" });
 }
@@ -204,7 +205,7 @@ sub action_gettokenstatus {
     });
 }
 
-sub action_privatelogin {
+sub action_unofficiallogin {
     my $email    = decode('UTF-8', $cgi->param('email')    // '');
     my $password = decode('UTF-8', $cgi->param('password') // '');
     unless ($email ne '' && $password ne '') {
@@ -214,7 +215,7 @@ sub action_privatelogin {
 
     my $plugin_folder = $lbpplugindir;
     $plugin_folder =~ s{.*/plugins/}{};
-    my $helper = "$lbhomedir/bin/plugins/$plugin_folder/navimow_private_login.py";
+    my $helper = "$lbhomedir/bin/plugins/$plugin_folder/navimow_unofficial_login.py";
     unless (-f $helper) {
         print encode_json({ ok => 0, error => "Login-Helfer nicht gefunden: $helper" });
         return;
@@ -240,7 +241,7 @@ sub action_privatelogin {
 
     my $result = eval { decode_json($result_line // '') };
     if (!$result) {
-        print encode_json({ ok => 0, error => 'Login-Helfer lieferte keine gueltige Antwort' });
+        print encode_json({ ok => 0, error => 'Login-Helfer lieferte keine gültige Antwort' });
         return;
     }
     if ($result->{ok}) {
@@ -250,7 +251,7 @@ sub action_privatelogin {
     print encode_json($result);
 }
 
-sub action_getprivatestatus {
+sub action_getunofficialstatus {
     my $cfg = {};
     if (-f $plugin_cfg) {
         local $/;
@@ -259,10 +260,10 @@ sub action_getprivatestatus {
         }
     }
     my $base_topic     = $cfg->{base_topic}          // 'navimow';
-    my $has_refresh    = ($cfg->{private_refresh_token} // '') ne '' ? 1 : 0;
-    my $devices_mapped = ref $cfg->{private_devices} eq 'ARRAY' ? scalar(@{$cfg->{private_devices}}) : 0;
+    my $has_refresh    = ($cfg->{unofficial_refresh_token} // '') ne '' ? 1 : 0;
+    my $devices_mapped = ref $cfg->{unofficial_devices} eq 'ARRAY' ? scalar(@{$cfg->{unofficial_devices}}) : 0;
 
-    my $raw = LoxBerry::IO::mqtt_get("$base_topic/gateway_private");
+    my $raw = LoxBerry::IO::mqtt_get("$base_topic/gateway_unofficial");
     unless (defined $raw && $raw ne '') {
         print encode_json({ ok => 0, has_refresh => $has_refresh,
                              devices_mapped => $devices_mapped });

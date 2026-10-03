@@ -1,8 +1,8 @@
 import pytest
 
-import navimow_private_auth as auth
-import navimow_private_client as client_module
-from navimow_private_client import NavimowAuthError, NavimowError, NavimowPrivateClient
+import navimow_unofficial_auth as auth
+import navimow_unofficial_client as client_module
+from navimow_unofficial_client import NavimowAuthError, NavimowError, NavimowUnofficialClient
 
 
 class _FakeResponse:
@@ -32,7 +32,7 @@ class _FakeSession:
 @pytest.fixture(autouse=True)
 def _identity_crypto(monkeypatch):
     # Crypto ist in Task 3 separat getestet -- hier wird die HTTP-/Retry-Logik
-    # isoliert geprueft, ohne echte Verschluesselung im Weg.
+    # isoliert geprüft, ohne echte Verschlüsselung im Weg.
     monkeypatch.setattr(client_module.crypto, "pack", lambda business: business)
     monkeypatch.setattr(client_module.crypto, "decode_response", lambda resp: resp)
 
@@ -46,7 +46,7 @@ async def test_call_reauths_once_on_auth_error():
     ]
     session = _FakeSession(responses)
     tokens = auth.Tokens(access_token="AT", refresh_token="RT", uuid="U", region="fra")
-    c = NavimowPrivateClient(session, "clientdev", tokens=tokens, uid="99",
+    c = NavimowUnofficialClient(session, "clientdev", tokens=tokens, uid="99",
                               host="navimow-fra.ninebot.com")
 
     data = await c.call("/vehicle/vehicle/index2", {"vehicle_sn": "SN1"})
@@ -60,7 +60,7 @@ async def test_call_reauths_once_on_auth_error():
 async def test_pause_sends_c_behavior_envelope():
     session = _FakeSession([{"code": 1, "data": {"cmd_num": "abc"}}])
     tokens = auth.Tokens(access_token="AT", refresh_token="RT", uuid="U", region="fra")
-    c = NavimowPrivateClient(session, "clientdev", tokens=tokens, uid="42",
+    c = NavimowUnofficialClient(session, "clientdev", tokens=tokens, uid="42",
                               host="navimow-fra.ninebot.com")
 
     result = await c.pause("SN1")
@@ -74,10 +74,10 @@ async def test_pause_sends_c_behavior_envelope():
 
 @pytest.mark.asyncio
 async def test_call_raises_navimow_error_on_business_failure():
-    from navimow_private_client import NavimowError
+    from navimow_unofficial_client import NavimowError
     session = _FakeSession([{"code": 5001, "desc": "refused while running"}])
     tokens = auth.Tokens(access_token="AT", refresh_token="RT", uuid="U", region="fra")
-    c = NavimowPrivateClient(session, "clientdev", tokens=tokens, uid="42",
+    c = NavimowUnofficialClient(session, "clientdev", tokens=tokens, uid="42",
                               host="navimow-fra.ninebot.com")
 
     with pytest.raises(NavimowError):
@@ -93,7 +93,7 @@ async def test_call_reports_retry_code_after_reauth():
     ]
     session = _FakeSession(responses)
     tokens = auth.Tokens(access_token="AT", refresh_token="RT", uuid="U", region="fra")
-    c = NavimowPrivateClient(session, "clientdev", tokens=tokens, uid="99",
+    c = NavimowUnofficialClient(session, "clientdev", tokens=tokens, uid="99",
                               host="navimow-fra.ninebot.com")
 
     with pytest.raises(NavimowError) as exc:

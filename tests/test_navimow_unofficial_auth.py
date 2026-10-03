@@ -1,10 +1,10 @@
 import pytest
 
-from navimow_private_auth import Tokens, _sign, _signed_headers
+from navimow_unofficial_auth import Tokens, _sign, _signed_headers
 
 
 def test_sign_known_vector():
-    # Von Hand mit hashlib.sha256 nachgerechnet, unabhaengig von _sign().
+    # Von Hand mit hashlib.sha256 nachgerechnet, unabhängig von _sign().
     vector = {"a": "1", "b": "2", "c": "x"}
     expected = "bd2ca1cba8d25bd1e5abaf6961680e0dde59957db76c1588aba3eac707a70bb6"
     assert _sign(vector) == expected

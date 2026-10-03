@@ -1,4 +1,4 @@
-"""Segway/Ninebot-Passport-Login fuer die private Navimow-Cloud (async, aiohttp).
+"""Segway/Ninebot-Passport-Login für die inoffizielle Navimow-Cloud (async, aiohttp).
 
 Port aus ilguala/navimow_pro (api/passport.py), von urllib (synchron) auf
 aiohttp umgestellt, damit derselbe ClientSession-Pool wie beim offiziellen
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import aiohttp
 
-from navimow_private_const import (
+from navimow_unofficial_const import (
     ALL_PASSPORT_HOSTS,
     DEFAULT_REGION,
     canonical_region,
@@ -40,7 +40,7 @@ class PassportError(Exception):
 
 
 class PassportAuthError(PassportError):
-    """Falsche Zugangsdaten oder abgelaufene Session -- Neuanmeldung noetig."""
+    """Falsche Zugangsdaten oder abgelaufene Session -- Neuanmeldung nötig."""
 
 
 @dataclass
@@ -87,7 +87,7 @@ async def _request(session: aiohttp.ClientSession, host: str, path: str,
     """Signierter Passport-Call gegen einen konkreten Regional-Host.
 
     Der Sign deckt exakt die Request-Params ab (GET: Query, POST: JSON-Body) --
-    jedes zusaetzliche Feld liefert serverseitig resultCode 90031 "sign invalid".
+    jedes zusätzliche Feld liefert serverseitig resultCode 90031 "sign invalid".
     """
     headers = _signed_headers(path, params)
     url = f"https://{host}{path}"
@@ -158,7 +158,7 @@ async def login(session: aiohttp.ClientSession, username: str, password: str,
 
 async def refresh(session: aiohttp.ClientSession, tokens: Tokens,
                    region: str | None = None) -> Tokens:
-    """POST /v3/user/refresh -> neue Tokens (verlaengert sich immer wieder)."""
+    """POST /v3/user/refresh -> neue Tokens (verlängert sich immer wieder)."""
     params = {
         "access_token": tokens.access_token,
         "refresh_token": tokens.refresh_token,

@@ -1,4 +1,4 @@
-"""Macht die flachen bin/-Module fuer alle Tests importierbar."""
+"""Macht die flachen bin/-Module für alle Tests importierbar."""
 import sys
 from pathlib import Path
 

@@ -83,31 +83,31 @@
     </div>
   </div>
 
-  <!-- Private-API-Karte -->
+  <!-- Karte für die inoffizielle API -->
   <div class="lb-card" style="flex:1 1 200px;">
     <div class="lb-card-body">
-      <div class="lb-section-title"><TMPL_VAR "PRIVATE.HEADER"></div>
-      <p style="font-size:0.85em; color:#777;"><TMPL_VAR "PRIVATE.HINT"></p>
+      <div class="lb-section-title"><TMPL_VAR "UNOFFICIAL.HEADER"></div>
+      <p style="font-size:0.85em; color:#777;"><TMPL_VAR "UNOFFICIAL.HINT"></p>
       <div class="lb-form-row">
-        <div class="lb-form-label"><TMPL_VAR "PRIVATE.LABEL_STATUS"></div>
+        <div class="lb-form-label"><TMPL_VAR "UNOFFICIAL.LABEL_STATUS"></div>
         <div class="lb-form-field">
-          <span id="private_status_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "PRIVATE.STATUS_NOT_CONNECTED"></span>
+          <span id="unofficial_status_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "UNOFFICIAL.STATUS_NOT_CONNECTED"></span>
         </div>
       </div>
       <div class="lb-form-row">
-        <div class="lb-form-label"><label for="private_email"><TMPL_VAR "PRIVATE.LABEL_EMAIL"></label></div>
-        <div class="lb-form-field"><input type="email" id="private_email" class="lb-input"></div>
+        <div class="lb-form-label"><label for="unofficial_email"><TMPL_VAR "UNOFFICIAL.LABEL_EMAIL"></label></div>
+        <div class="lb-form-field"><input type="email" id="unofficial_email" class="lb-input"></div>
       </div>
       <div class="lb-form-row">
-        <div class="lb-form-label"><label for="private_password"><TMPL_VAR "PRIVATE.LABEL_PASSWORD"></label></div>
-        <div class="lb-form-field"><input type="password" id="private_password" class="lb-input"></div>
+        <div class="lb-form-label"><label for="unofficial_password"><TMPL_VAR "UNOFFICIAL.LABEL_PASSWORD"></label></div>
+        <div class="lb-form-field"><input type="password" id="unofficial_password" class="lb-input"></div>
       </div>
       <div style="margin-top:0.75rem; text-align:center;">
-        <a id="btn_private_connect" href="#" class="lb-btn lb-btn-primary">
-          <TMPL_VAR "PRIVATE.BTN_CONNECT">
+        <a id="btn_unofficial_connect" href="#" class="lb-btn lb-btn-primary">
+          <TMPL_VAR "UNOFFICIAL.BTN_CONNECT">
         </a>
       </div>
-      <div id="private_connect_error" class="lb-alert lb-alert-danger" style="display:none; margin-top:0.5rem;"></div>
+      <div id="unofficial_connect_error" class="lb-alert lb-alert-danger" style="display:none; margin-top:0.5rem;"></div>
     </div>
   </div>
 

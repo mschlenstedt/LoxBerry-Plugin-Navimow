@@ -1,6 +1,6 @@
-"""Regionen- und Host-Tabellen fuer die private Navimow-Cloud.
+"""Regionen- und Host-Tabellen für die inoffizielle Navimow-Cloud.
 
-Port aus ilguala/navimow_pro (const.py), beschraenkt auf das, was Auth- und
+Port aus ilguala/navimow_pro (const.py), beschränkt auf das, was Auth- und
 Login-Code brauchen. Jede Region hat ihren eigenen Passport-Server; die
 falsche Region antwortet beim Login mit "account not exists" statt die
 Anfrage weiterzuleiten.
@@ -26,7 +26,7 @@ MOWER_HOSTS = {
     "fra": ("navimow-fra.ninebot.com", "navimow-fra.willand.com"),
     "sg": ("navimow-sg.willand.com",),
     "bj": ("navimow-bj.ninebot.com", "navimow-bj.willand.com"),
-    # Kein eigener US-Host: ein US-Account wird ueber den Frankfurt-Host bedient.
+    # Kein eigener US-Host: ein US-Account wird über den Frankfurt-Host bedient.
     "us": ("navimow-fra.ninebot.com", "navimow-ore.willand.com"),
 }
 

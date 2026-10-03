@@ -5,11 +5,11 @@
   "expires_at": 0,
   "token_type": "Bearer",
   "devices": [],
-  "private_enabled": false,
-  "private_region": "",
-  "private_uuid": "",
-  "private_refresh_token": "",
-  "private_uid": "",
-  "private_host": "",
-  "private_devices": []
+  "unofficial_enabled": false,
+  "unofficial_region": "",
+  "unofficial_uuid": "",
+  "unofficial_refresh_token": "",
+  "unofficial_uid": "",
+  "unofficial_host": "",
+  "unofficial_devices": []
 }

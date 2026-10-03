@@ -1,13 +1,13 @@
-"""p:101-Envelope-Crypto fuer die private Segway-Navimow-Cloud.
+"""p:101-Envelope-Crypto für die inoffizielle Segway-Navimow-Cloud.
 
 Byte-genauer Port aus ilguala/navimow_pro (api/crypto.py). Die Konstanten sind
 app-weite Werte (kein Nutzergeheimnis) und werden nicht "verbessert" -- sie
 passen exakt zum Server.
 
-Rezept: reqKey = 16 Zufallsbytes -> RSA-1024-gewrappt als "k"; Klartext-Huelle
+Rezept: reqKey = 16 Zufallsbytes -> RSA-1024-gewrappt als "k"; Klartext-Hülle
 (business-JSON + feste keyData-Felder) AES-128-CBC(reqKey, IV=0) als "d";
 MD5 des Klartexts als "h". Antwort wird mit einem festen SESSION_KEY
-entschluesselt (kein RSA noetig).
+entschlüsselt (kein RSA nötig).
 """
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def _build_pt(business: dict) -> bytes:
 
 
 def pack(business: dict) -> dict:
-    """Baut die Anfrage-Huelle {d,h,k,p,t} fuer eine Business-Payload."""
+    """Baut die Anfrage-Hülle {d,h,k,p,t} für eine Business-Payload."""
     pt = _build_pt(business)
     req_key = bytes(0x41 + (b % 26) for b in os.urandom(16))
     return {
@@ -96,10 +96,10 @@ def pack(business: dict) -> dict:
 
 
 def decode_response(j: dict) -> dict:
-    """Entschluesselt eine {r,s,v}-Antwort-Huelle zurueck zum Business-JSON.
+    """Entschlüsselt eine {r,s,v}-Antwort-Hülle zurück zum Business-JSON.
 
-    Ist die Payload keine {r,...}-Huelle (z.B. ein blanker Fehler), wird sie
-    unveraendert zurueckgegeben, damit der Aufrufer Fehlerfelder auswerten kann.
+    Ist die Payload keine {r,...}-Hülle (z.B. ein blanker Fehler), wird sie
+    unverändert zurückgegeben, damit der Aufrufer Fehlerfelder auswerten kann.
     """
     if not isinstance(j, dict) or "r" not in j:
         return j

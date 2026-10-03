@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Einmaliger Login-Helfer fuer die private Navimow-API.
+"""Einmaliger Login-Helfer für die inoffizielle Navimow-API.
 
-Von ajax.cgi als Subprozess aufgerufen: E-Mail/Passwort kommen als JSON ueber
+Von ajax.cgi als Subprozess aufgerufen: E-Mail/Passwort kommen als JSON über
 stdin (nie als argv -- landen sonst im Klartext in der Prozessliste), werden
 nur transient verwendet und nirgends persistiert. Ergebnis (refresh_token,
-uid, Geraete-Zuordnung) wird direkt in pluginconfig.json geschrieben.
+uid, Geräte-Zuordnung) wird direkt in pluginconfig.json geschrieben.
 
-Eigenstaendiges Config-Laden statt Import von navimow_gateway.py -- dasselbe
+Eigenständiges Config-Laden statt Import von navimow_gateway.py -- dasselbe
 Muster wie navimow_probe.py, um den Daemon-Code (asyncio-Tasks, MQTT-Client-
 Aufbau) nicht als Nebeneffekt eines Login-Aufrufs mitzuimportieren.
 """
@@ -22,9 +22,9 @@ from pathlib import Path
 
 import aiohttp
 
-import navimow_private_auth as auth
-from navimow_private_client import NavimowPrivateClient, NavimowError
-from navimow_private_const import mower_hosts
+import navimow_unofficial_auth as auth
+from navimow_unofficial_client import NavimowUnofficialClient, NavimowError
+from navimow_unofficial_const import mower_hosts
 
 
 def _load_json(path: Path) -> dict:
@@ -42,19 +42,19 @@ def _save_json_atomic(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
-def _match_devices(official: list, private: list) -> list:
-    """Ordnet offizielle device_id und private vehicle_sn einander zu.
+def _match_devices(official: list, unofficial: list) -> list:
+    """Ordnet offizielle device_id und inoffizielle vehicle_sn einander zu.
 
-    Automatisch nur im eindeutigen Fall (genau ein Geraet auf jeder Seite) --
-    bei mehreren Geraeten gibt es serverseitig kein gemeinsames Feld, an dem
-    sich das zweifelsfrei zuordnen liesse, also lieber leer zurueckgeben und
+    Automatisch nur im eindeutigen Fall (genau ein Gerät auf jeder Seite) --
+    bei mehreren Geräten gibt es serverseitig kein gemeinsames Feld, an dem
+    sich das zweifelsfrei zuordnen liesse, also lieber leer zurückgeben und
     manuelles Eintragen verlangen als falsch zuordnen.
     """
-    if len(official) == 1 and len(private) == 1:
+    if len(official) == 1 and len(unofficial) == 1:
         return [{
             "device_id": official[0]["device_id"],
-            "vehicle_sn": str(private[0].get("vehicle_sn", "")),
-            "vehicle_type": int(private[0].get("vehicle_type", 0) or 0),
+            "vehicle_sn": str(unofficial[0].get("vehicle_sn", "")),
+            "vehicle_type": int(unofficial[0].get("vehicle_type", 0) or 0),
         }]
     return []
 
@@ -71,35 +71,35 @@ async def _do_login(configdir: Path, email: str, password: str) -> dict:
             return {"ok": False, "error": "pluginconfig.json unreadable"}
     else:
         cfg = {}
-    cfg.setdefault("private_client_device_id", uuid.uuid4().hex)
+    cfg.setdefault("unofficial_client_device_id", uuid.uuid4().hex)
 
     async with aiohttp.ClientSession() as session:
         tokens = await auth.login(session, email, password)
         host = mower_hosts(tokens.region)[0]
-        client = NavimowPrivateClient(
-            session, cfg["private_client_device_id"],
+        client = NavimowUnofficialClient(
+            session, cfg["unofficial_client_device_id"],
             tokens=tokens, region=tokens.region or "fra", host=host,
         )
         await client.mower_login()
-        private_devices = await client.auth_list()
+        unofficial_devices = await client.auth_list()
 
     official_devices = cfg.get("devices", [])
-    matched = _match_devices(official_devices, private_devices)
+    matched = _match_devices(official_devices, unofficial_devices)
 
-    cfg["private_region"] = tokens.region or ""
-    cfg["private_uuid"] = tokens.uuid
-    cfg["private_refresh_token"] = tokens.refresh_token
-    cfg["private_uid"] = client.uid
-    cfg["private_host"] = host
-    cfg["private_enabled"] = True
+    cfg["unofficial_region"] = tokens.region or ""
+    cfg["unofficial_uuid"] = tokens.uuid
+    cfg["unofficial_refresh_token"] = tokens.refresh_token
+    cfg["unofficial_uid"] = client.uid
+    cfg["unofficial_host"] = host
+    cfg["unofficial_enabled"] = True
     if matched:
-        cfg["private_devices"] = matched
+        cfg["unofficial_devices"] = matched
     _save_json_atomic(plugin_cfg_path, cfg)
 
     return {
         "ok": True,
         "devices_total_official": len(official_devices),
-        "devices_total_private": len(private_devices),
+        "devices_total_unofficial": len(unofficial_devices),
         "devices_matched": len(matched),
     }
 

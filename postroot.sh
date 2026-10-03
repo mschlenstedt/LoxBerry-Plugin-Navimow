@@ -27,12 +27,12 @@ fi
 
 echo "<OK> Navimow: Python dependencies installed successfully"
 
-# Optional: nur fuer die private API. Ein Fehlschlag darf die Installation
-# und den offiziellen Pfad nicht beeintraechtigen.
+# Optional: nur für die inoffizielle API. Ein Fehlschlag darf die Installation
+# und den offiziellen Pfad nicht beeinträchtigen.
 pip3 install --quiet "cryptography" 2>/dev/null \
 || pip3 install --break-system-packages --quiet "cryptography"
 if [ $? -ne 0 ]; then
-    echo "<WARNING> Navimow: cryptography could not be installed — private API disabled, official API unaffected"
+    echo "<WARNING> Navimow: cryptography could not be installed — unofficial API disabled, official API unaffected"
 fi
 
 exit 0

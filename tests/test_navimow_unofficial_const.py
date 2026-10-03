@@ -1,4 +1,4 @@
-from navimow_private_const import canonical_region, passport_hosts, mower_hosts, DEFAULT_REGION
+from navimow_unofficial_const import canonical_region, passport_hosts, mower_hosts, DEFAULT_REGION
 
 
 def test_default_region():

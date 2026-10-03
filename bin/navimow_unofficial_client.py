@@ -1,10 +1,10 @@
-"""Authentifizierter Call-Wrapper fuer die private Navimow-Cloud (async, aiohttp).
+"""Authentifizierter Call-Wrapper für die inoffizielle Navimow-Cloud (async, aiohttp).
 
 Port aus ilguala/navimow_pro (api/client.py), auf aiohttp statt http.client
-umgestellt und auf den Phase-1-Befehlsumfang (Pause/Dock/Resume + Geraeteliste)
-beschraenkt. Weitere Calls (Zonen, Zeitplan, Settings) kommen in spaeteren
-Phasen dazu, ohne dass sich diese Struktur aendert -- neue Methoden auf
-NavimowPrivateClient, alle ueber dieselbe call()/_raw()-Kette.
+umgestellt und auf den Phase-1-Befehlsumfang (Pause/Dock/Resume + Geräteliste)
+beschränkt. Weitere Calls (Zonen, Zeitplan, Settings) kommen in späteren
+Phasen dazu, ohne dass sich diese Struktur ändert -- neue Methoden auf
+NavimowUnofficialClient, alle über dieselbe call()/_raw()-Kette.
 """
 from __future__ import annotations
 
@@ -16,15 +16,15 @@ from typing import Any
 
 import aiohttp
 
-import navimow_private_crypto as crypto
-from navimow_private_auth import Tokens
+import navimow_unofficial_crypto as crypto
+from navimow_unofficial_auth import Tokens
 
 _HEADERS = {
     "Content-Type": "text/html",
     "ninebot-version": "1",
-    # Byte-identisch mit dem, was der geprueft funktionierende Referenzclient
+    # Byte-identisch mit dem, was der geprüft funktionierende Referenzclient
     # sendet -- der Server erwartet exakt diesen Wert; dass wir aiohttp statt
-    # urllib benutzen, aendert daran nichts.
+    # urllib benutzen, ändert daran nichts.
     "User-Agent": "Python-urllib/3.13",
 }
 
@@ -51,8 +51,8 @@ class NavimowAuthError(NavimowError):
     """Auth-/Session-Problem (Token abgelaufen, falsche uid, andernorts angemeldet)."""
 
 
-class NavimowPrivateClient:
-    """Eine Kontositzung gegen die private Navimow-Cloud fuer ein Geraet."""
+class NavimowUnofficialClient:
+    """Eine Kontositzung gegen die inoffizielle Navimow-Cloud für ein Gerät."""
 
     def __init__(self, session, client_device_id: str, *, tokens: Tokens, uid: str = "",
                  region: str = "fra", language: str = "en", host: str) -> None:
@@ -106,10 +106,10 @@ class NavimowPrivateClient:
         return crypto.decode_response(await self._post(path, crypto.pack(business)))
 
     async def mower_login(self) -> str:
-        """POST /user/user/login -- registriert dieses Geraet, liefert die uid.
+        """POST /user/user/login -- registriert dieses Gerät, liefert die uid.
 
-        Versucht zuerst ohne Checkcode-Signatur (bewaehrt funktionierend);
-        faellt bei Ablehnung auf die signierte Variante zurueck.
+        Versucht zuerst ohne Checkcode-Signatur (bewährt funktionierend);
+        fällt bei Ablehnung auf die signierte Variante zurück.
         """
         field4 = {
             "uuid": self._tokens.uuid,
@@ -139,7 +139,7 @@ class NavimowPrivateClient:
         return None
 
     async def call(self, path: str, extra: dict | None = None, *, auth: bool = True) -> Any:
-        """Verschluesselter Call, liefert die ``data``-Payload bei Erfolg.
+        """Verschlüsselter Call, liefert die ``data``-Payload bei Erfolg.
 
         Bei Auth-/Ablauf-Code wird einmal neu angemeldet und wiederholt.
         """
@@ -169,7 +169,7 @@ class NavimowPrivateClient:
         raise NavimowError(code, desc)
 
     async def auth_list(self) -> list:
-        """Geraete auf diesem Account. Lernt die uid, falls noch nicht gesetzt."""
+        """Geräte auf diesem Account. Lernt die uid, falls noch nicht gesetzt."""
         data = await self.call("/vehicle/vehicle/auth-list", {})
         items = data if isinstance(data, list) else (data or {}).get("list") or []
         if items and not self._uid:

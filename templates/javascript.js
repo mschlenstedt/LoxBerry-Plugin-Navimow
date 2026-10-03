@@ -142,69 +142,69 @@ updateTokenStatus();
 setInterval(updateGatewayStatus, 5000);
 setInterval(updateTokenStatus,   5000);
 
-function updatePrivateStatus() {
-    fetch('ajax.cgi?action=getprivatestatus')
+function updateUnofficialStatus() {
+    fetch('ajax.cgi?action=getunofficialstatus')
         .then(r => r.json())
         .then(data => {
-            const badge = document.getElementById('private_status_badge');
+            const badge = document.getElementById('unofficial_status_badge');
             if (!badge) return;
             if (data.ok && !data.devices_mapped) {
-                badge.textContent = '<TMPL_VAR "PRIVATE.STATUS_NO_DEVICE_MATCH">';
+                badge.textContent = '<TMPL_VAR "UNOFFICIAL.STATUS_NO_DEVICE_MATCH">';
                 badge.className = 'lb-badge lb-badge-warning';
             } else if (data.ok) {
-                badge.textContent = '<TMPL_VAR "PRIVATE.STATUS_CONNECTED">';
+                badge.textContent = '<TMPL_VAR "UNOFFICIAL.STATUS_CONNECTED">';
                 badge.className = 'lb-badge lb-badge-success';
             } else if (data.has_refresh) {
-                badge.textContent = '<TMPL_VAR "PRIVATE.STATUS_NOT_CONNECTED">';
+                badge.textContent = '<TMPL_VAR "UNOFFICIAL.STATUS_NOT_CONNECTED">';
                 badge.className = 'lb-badge lb-badge-warning';
             } else {
-                badge.textContent = '<TMPL_VAR "PRIVATE.STATUS_NOT_CONNECTED">';
+                badge.textContent = '<TMPL_VAR "UNOFFICIAL.STATUS_NOT_CONNECTED">';
                 badge.className = 'lb-badge lb-badge-danger';
             }
         })
         .catch(() => {});
 }
 
-function submitPrivateLogin() {
-    const email = document.getElementById('private_email').value.trim();
-    const password = document.getElementById('private_password').value;
-    const errorBox = document.getElementById('private_connect_error');
+function submitUnofficialLogin() {
+    const email = document.getElementById('unofficial_email').value.trim();
+    const password = document.getElementById('unofficial_password').value;
+    const errorBox = document.getElementById('unofficial_connect_error');
     errorBox.style.display = 'none';
 
     if (!email || !password) {
-        errorBox.textContent = '<TMPL_VAR "PRIVATE.ERR_REQUIRED">';
+        errorBox.textContent = '<TMPL_VAR "UNOFFICIAL.ERR_REQUIRED">';
         errorBox.style.display = 'block';
         return;
     }
 
-    const body = new URLSearchParams({ action: 'privatelogin', email: email, password: password });
+    const body = new URLSearchParams({ action: 'unofficiallogin', email: email, password: password });
     fetch('ajax.cgi', { method: 'POST', body: body })
         .then(r => r.json())
         .then(data => {
-            document.getElementById('private_password').value = '';
+            document.getElementById('unofficial_password').value = '';
             if (data.ok) {
-                updatePrivateStatus();
+                updateUnofficialStatus();
             } else {
-                errorBox.textContent = data.error || '<TMPL_VAR "PRIVATE.ERR_LOGIN_FAILED">';
+                errorBox.textContent = data.error || '<TMPL_VAR "UNOFFICIAL.ERR_LOGIN_FAILED">';
                 errorBox.style.display = 'block';
             }
         })
         .catch(() => {
-            document.getElementById('private_password').value = '';
-            errorBox.textContent = '<TMPL_VAR "PRIVATE.ERR_NETWORK">';
+            document.getElementById('unofficial_password').value = '';
+            errorBox.textContent = '<TMPL_VAR "UNOFFICIAL.ERR_NETWORK">';
             errorBox.style.display = 'block';
         });
 }
 
 document.addEventListener('DOMContentLoaded', function () {
-    const btn = document.getElementById('btn_private_connect');
+    const btn = document.getElementById('btn_unofficial_connect');
     if (btn) {
         btn.addEventListener('click', function (e) {
             e.preventDefault();
-            submitPrivateLogin();
+            submitUnofficialLogin();
         });
     }
-    updatePrivateStatus();
-    setInterval(updatePrivateStatus, 30000);
+    updateUnofficialStatus();
+    setInterval(updateUnofficialStatus, 30000);
 });
 </script>

@@ -143,7 +143,7 @@ def load_general_config() -> dict:
     return _load_json(GENERAL_JSON)
 
 
-_EPHEMERAL_FIELDS = frozenset(("access_token", "expires_at", "token_type", "private_access_token"))
+_EPHEMERAL_FIELDS = frozenset(("access_token", "expires_at", "token_type", "unofficial_access_token"))
 
 
 def load_plugin_config() -> dict:
@@ -156,24 +156,24 @@ def load_plugin_config() -> dict:
     cfg.setdefault("base_topic",    "navimow")
     cfg.setdefault("refresh_token", "")
     cfg.setdefault("devices",       [])
-    # Private API (parallel zur offiziellen) — eigene Zugangsdaten/Session.
-    cfg.setdefault("private_enabled",         False)
-    cfg.setdefault("private_region",          "")
-    cfg.setdefault("private_uuid",            "")
-    cfg.setdefault("private_refresh_token",   "")
-    cfg.setdefault("private_uid",             "")
-    cfg.setdefault("private_host",            "")
-    cfg.setdefault("private_devices",         [])
-    dirty = "private_client_device_id" not in cfg
-    cfg.setdefault("private_client_device_id", uuid.uuid4().hex)
+    # Inoffizielle API (parallel zur offiziellen) — eigene Zugangsdaten/Session.
+    cfg.setdefault("unofficial_enabled",         False)
+    cfg.setdefault("unofficial_region",          "")
+    cfg.setdefault("unofficial_uuid",            "")
+    cfg.setdefault("unofficial_refresh_token",   "")
+    cfg.setdefault("unofficial_uid",             "")
+    cfg.setdefault("unofficial_host",            "")
+    cfg.setdefault("unofficial_devices",         [])
+    dirty = "unofficial_client_device_id" not in cfg
+    cfg.setdefault("unofficial_client_device_id", uuid.uuid4().hex)
     # These live in memory only — never written to SD card
     cfg["access_token"] = ""
     cfg["expires_at"]   = 0
-    cfg["private_access_token"] = ""
+    cfg["unofficial_access_token"] = ""
     if dirty:
-        # Muss sofort persistiert werden: die Geraete-ID muss ueber Neustarts
+        # Muss sofort persistiert werden: die Geräte-ID muss über Neustarts
         # stabil bleiben, sonst registriert sich jeder Neustart als neues
-        # Geraet bei der privaten Cloud (siehe NavimowPrivateClient-Docstring).
+        # Gerät bei der inoffiziellen Cloud (siehe NavimowUnofficialClient-Docstring).
         save_plugin_config(cfg)
     return cfg
 
@@ -536,22 +536,22 @@ def _update_auth_status(plugin_cfg: dict, base_topic: str) -> None:
     })
     _auth_dirty = True
 
-_private_auth_payload: dict = {}
-_private_auth_dirty:   bool = False
+_unofficial_auth_payload: dict = {}
+_unofficial_auth_dirty:   bool = False
 
 
-def _update_private_auth_status(plugin_cfg: dict, base_topic: str) -> None:
-    global _private_auth_dirty
-    token      = plugin_cfg.get("private_access_token", "")
-    refresh    = plugin_cfg.get("private_refresh_token", "")
-    _private_auth_payload.clear()
-    _private_auth_payload.update({
-        "topic":         f"{base_topic}/gateway_private",
+def _update_unofficial_auth_status(plugin_cfg: dict, base_topic: str) -> None:
+    global _unofficial_auth_dirty
+    token      = plugin_cfg.get("unofficial_access_token", "")
+    refresh    = plugin_cfg.get("unofficial_refresh_token", "")
+    _unofficial_auth_payload.clear()
+    _unofficial_auth_payload.update({
+        "topic":         f"{base_topic}/gateway_unofficial",
         "state":         "running",
         "authenticated": bool(token and refresh),
         "expires_at":    0,
     })
-    _private_auth_dirty = True
+    _unofficial_auth_dirty = True
 
 # Startwert = jetzt, nicht 0.0: sonst sieht der Silence-Watchdog beim ersten
 # Durchlauf "seit 1970 keine Nachricht" und reconnectet eine frische, gesunde
@@ -945,13 +945,13 @@ async def task_navimow_to_mqtt(
                         await lbmqtt.publish(topic, json.dumps(payload), retain=True)
                         LOGDEB(f"Published auth status: authenticated={payload.get('authenticated')}")
 
-                    global _private_auth_dirty
-                    if _private_auth_dirty and _private_auth_payload:
-                        _private_auth_dirty = False
-                        topic = _private_auth_payload["topic"]
-                        payload = {k: v for k, v in _private_auth_payload.items() if k != "topic"}
+                    global _unofficial_auth_dirty
+                    if _unofficial_auth_dirty and _unofficial_auth_payload:
+                        _unofficial_auth_dirty = False
+                        topic = _unofficial_auth_payload["topic"]
+                        payload = {k: v for k, v in _unofficial_auth_payload.items() if k != "topic"}
                         await lbmqtt.publish(topic, json.dumps(payload), retain=True)
-                        LOGDEB(f"Published private auth status: authenticated={payload.get('authenticated')}")
+                        LOGDEB(f"Published unofficial auth status: authenticated={payload.get('authenticated')}")
 
         except Exception as e:
             if not shutdown.is_set():
@@ -975,17 +975,17 @@ async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason
 
 
 # ── Task 8: LoxBerry MQTT → Navimow commands ─────────────────────────────────
-_PRIVATE_COMMANDS = {"pause", "dock", "resume"}
-# Starke Referenzen auf laufende Private-Command-Tasks (sonst GC-gefaehrdet).
-_private_tasks: set = set()
+_UNOFFICIAL_COMMANDS = {"pause", "dock", "resume"}
+# Starke Referenzen auf laufende Tasks inoffizieller Befehle (sonst GC-gefährdet).
+_unofficial_tasks: set = set()
 
 
-async def _run_private_command(lbmqtt, message, device_id, base_topic, plugin_cfg, private_client) -> None:
+async def _run_unofficial_command(lbmqtt, message, device_id, base_topic, plugin_cfg, unofficial_client) -> None:
     try:
-        await _handle_private_command(lbmqtt, message, device_id, base_topic,
-                                      plugin_cfg, private_client)
+        await _handle_unofficial_command(lbmqtt, message, device_id, base_topic,
+                                      plugin_cfg, unofficial_client)
     except Exception as e:
-        LOGERR(f"Private command error: {e}")
+        LOGERR(f"Unofficial command error: {e}")
 
 
 async def task_mqtt_to_navimow(
@@ -993,7 +993,7 @@ async def task_mqtt_to_navimow(
     plugin_cfg: dict,
     base_topic: str,
     broker: dict,
-    private_client,   # NavimowPrivateClient | None
+    unofficial_client,   # NavimowUnofficialClient | None
     shutdown: asyncio.Event,
 ) -> None:
     mqtt_kwargs = _build_mqtt_kwargs(broker)
@@ -1001,8 +1001,8 @@ async def task_mqtt_to_navimow(
         try:
             async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
                 await lbmqtt.subscribe(f"{base_topic}/+/set")
-                await lbmqtt.subscribe(f"{base_topic}/+/set_private")
-                LOGINF(f"Subscribed to {base_topic}/+/set and {base_topic}/+/set_private")
+                await lbmqtt.subscribe(f"{base_topic}/+/set_unofficial")
+                LOGINF(f"Subscribed to {base_topic}/+/set and {base_topic}/+/set_unofficial")
                 async for message in lbmqtt.messages:
                     if shutdown.is_set():
                         break
@@ -1012,13 +1012,13 @@ async def task_mqtt_to_navimow(
                         continue
                     device_id = parts[-2]
 
-                    if topic_str.endswith("/set_private"):
-                        task = asyncio.create_task(_run_private_command(
+                    if topic_str.endswith("/set_unofficial"):
+                        task = asyncio.create_task(_run_unofficial_command(
                             lbmqtt, message, device_id, base_topic,
-                            plugin_cfg, private_client,
+                            plugin_cfg, unofficial_client,
                         ))
-                        _private_tasks.add(task)
-                        task.add_done_callback(_private_tasks.discard)
+                        _unofficial_tasks.add(task)
+                        task.add_done_callback(_unofficial_tasks.discard)
                         continue
 
                     cmd = message.payload.decode("utf-8", errors="replace").strip().lower()
@@ -1043,52 +1043,52 @@ async def task_mqtt_to_navimow(
                 await asyncio.sleep(10)
 
 
-async def _handle_private_command(lbmqtt, message, device_id, base_topic, plugin_cfg, private_client) -> None:
-    """Phase 1: nur pause/dock/resume. Spaetere Phasen erweitern _PRIVATE_COMMANDS
-    und diese Funktion um mow/schedule/setting, ohne den Dispatch-Aufbau zu aendern."""
+async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plugin_cfg, unofficial_client) -> None:
+    """Phase 1: nur pause/dock/resume. Spätere Phasen erweitern _UNOFFICIAL_COMMANDS
+    und diese Funktion um mow/schedule/setting, ohne den Dispatch-Aufbau zu ändern."""
     try:
         payload = json.loads(message.payload.decode("utf-8", errors="replace"))
         cmd = str(payload.get("cmd", "")).strip().lower()
     except (json.JSONDecodeError, AttributeError):
-        LOGWARN(f"set_private: invalid JSON payload for {device_id}")
+        LOGWARN(f"set_unofficial: invalid JSON payload for {device_id}")
         await _publish_command_result(lbmqtt, base_topic, device_id, "invalid", False,
-                                       "invalid JSON payload", source="private")
+                                       "invalid JSON payload", source="unofficial")
         return
 
-    if private_client is None:
-        LOGWARN(f"set_private({cmd}) ignored — private API not configured")
+    if unofficial_client is None:
+        LOGWARN(f"set_unofficial({cmd}) ignored — unofficial API not configured")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       "private API not configured", source="private")
+                                       "unofficial API not configured", source="unofficial")
         return
 
-    if cmd not in _PRIVATE_COMMANDS:
-        LOGWARN(f"set_private: unknown command {cmd}")
+    if cmd not in _UNOFFICIAL_COMMANDS:
+        LOGWARN(f"set_unofficial: unknown command {cmd}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       f"unknown command: {cmd}", source="private")
+                                       f"unknown command: {cmd}", source="unofficial")
         return
 
-    device_map = {d.get("device_id"): d for d in plugin_cfg.get("private_devices", []) if d.get("device_id")}
+    device_map = {d.get("device_id"): d for d in plugin_cfg.get("unofficial_devices", []) if d.get("device_id")}
     mapping = device_map.get(device_id)
     if not mapping:
-        LOGWARN(f"set_private({cmd}): no vehicle_sn mapping for {device_id}")
+        LOGWARN(f"set_unofficial({cmd}): no vehicle_sn mapping for {device_id}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       "no vehicle_sn mapping for this device", source="private")
+                                       "no vehicle_sn mapping for this device", source="unofficial")
         return
 
     sn = mapping.get("vehicle_sn", "")
     if not sn:
-        LOGWARN(f"set_private({cmd}): no vehicle_sn value for {device_id}")
+        LOGWARN(f"set_unofficial({cmd}): no vehicle_sn value for {device_id}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       "no vehicle_sn mapping for this device", source="private")
+                                       "no vehicle_sn mapping for this device", source="unofficial")
         return
     try:
-        method = getattr(private_client, cmd)
+        method = getattr(unofficial_client, cmd)
         await method(sn)
-        LOGOK(f"private {cmd}({device_id})")
-        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True, "ok", source="private")
+        LOGOK(f"unofficial {cmd}({device_id})")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True, "ok", source="unofficial")
     except Exception as e:
-        LOGERR(f"private {cmd}({device_id}) failed: {e}")
-        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, str(e), source="private")
+        LOGERR(f"unofficial {cmd}({device_id}) failed: {e}")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, str(e), source="unofficial")
 
 
 # ── Task 9: Token Refresh ─────────────────────────────────────────────────────
@@ -1161,20 +1161,20 @@ async def task_token_refresh(
             _update_auth_status(plugin_cfg, base_topic)
 
 
-async def task_private_token_refresh(
+async def task_unofficial_token_refresh(
     plugin_cfg: dict,
     session: aiohttp.ClientSession,
-    private_client,   # NavimowPrivateClient | None
+    unofficial_client,   # NavimowUnofficialClient | None
     base_topic: str,
     shutdown: asyncio.Event,
 ) -> None:
-    """Haelt die private Passport-Session am Leben (Refresh alle ~55 Minuten).
+    """Hält die inoffizielle Passport-Session am Leben (Refresh alle ~55 Minuten).
 
-    Analog zu task_token_refresh, aber ohne Reconnect-Zwang: die private API
+    Analog zu task_token_refresh, aber ohne Reconnect-Zwang: die inoffizielle API
     hat -- anders als die offizielle Cloud-MQTT -- keinen langlebigen
     WebSocket, jeder Call baut die Verbindung frisch auf.
     """
-    if private_client is None:
+    if unofficial_client is None:
         return
     delay = 55 * 60  # Start after initial refresh done in main()
     while not shutdown.is_set():
@@ -1182,28 +1182,28 @@ async def task_private_token_refresh(
         if shutdown.is_set():
             break
         try:
-            import navimow_private_auth
-            new_tokens = await navimow_private_auth.refresh(session, private_client.tokens)
+            import navimow_unofficial_auth
+            new_tokens = await navimow_unofficial_auth.refresh(session, unofficial_client.tokens)
         except Exception as e:
-            LOGWARN(f"Private token refresh failed: {e}")
-            plugin_cfg["private_access_token"] = ""
-            _update_private_auth_status(plugin_cfg, base_topic)
+            LOGWARN(f"Unofficial token refresh failed: {e}")
+            plugin_cfg["unofficial_access_token"] = ""
+            _update_unofficial_auth_status(plugin_cfg, base_topic)
             delay = min(delay * 2, 55 * 60) if delay < 55 * 60 else 60
             continue
         changed = (
-            plugin_cfg.get("private_refresh_token") != new_tokens.refresh_token
-            or plugin_cfg.get("private_uuid", "") != new_tokens.uuid
-            or plugin_cfg.get("private_region", "") != new_tokens.region
+            plugin_cfg.get("unofficial_refresh_token") != new_tokens.refresh_token
+            or plugin_cfg.get("unofficial_uuid", "") != new_tokens.uuid
+            or plugin_cfg.get("unofficial_region", "") != new_tokens.region
         )
-        private_client._tokens = new_tokens
-        plugin_cfg["private_refresh_token"] = new_tokens.refresh_token
-        plugin_cfg["private_access_token"]  = new_tokens.access_token
-        plugin_cfg["private_uuid"]          = new_tokens.uuid
-        plugin_cfg["private_region"]        = new_tokens.region
+        unofficial_client._tokens = new_tokens
+        plugin_cfg["unofficial_refresh_token"] = new_tokens.refresh_token
+        plugin_cfg["unofficial_access_token"]  = new_tokens.access_token
+        plugin_cfg["unofficial_uuid"]          = new_tokens.uuid
+        plugin_cfg["unofficial_region"]        = new_tokens.region
         if changed:
             save_plugin_config(plugin_cfg)
-        _update_private_auth_status(plugin_cfg, base_topic)
-        LOGOK("Private session refreshed")
+        _update_unofficial_auth_status(plugin_cfg, base_topic)
+        LOGOK("Unofficial session refreshed")
         delay = 55 * 60
 
 
@@ -1358,40 +1358,40 @@ async def main() -> None:
             await _do_token_refresh(plugin_cfg, session)
         _update_auth_status(plugin_cfg, base_topic)
 
-        private_client = None
-        if plugin_cfg.get("private_enabled") and plugin_cfg.get("private_refresh_token"):
+        unofficial_client = None
+        if plugin_cfg.get("unofficial_enabled") and plugin_cfg.get("unofficial_refresh_token"):
             try:
-                import navimow_private_auth
-                from navimow_private_client import NavimowPrivateClient
-                tokens = navimow_private_auth.Tokens(
+                import navimow_unofficial_auth
+                from navimow_unofficial_client import NavimowUnofficialClient
+                tokens = navimow_unofficial_auth.Tokens(
                     access_token="",
-                    refresh_token=plugin_cfg["private_refresh_token"],
-                    uuid=plugin_cfg.get("private_uuid", ""),
-                    region=plugin_cfg.get("private_region", "fra"),
+                    refresh_token=plugin_cfg["unofficial_refresh_token"],
+                    uuid=plugin_cfg.get("unofficial_uuid", ""),
+                    region=plugin_cfg.get("unofficial_region", "fra"),
                 )
-                tokens = await navimow_private_auth.refresh(session, tokens)
+                tokens = await navimow_unofficial_auth.refresh(session, tokens)
                 changed = (
-                    plugin_cfg.get("private_refresh_token") != tokens.refresh_token
-                    or plugin_cfg.get("private_uuid", "") != tokens.uuid
-                    or plugin_cfg.get("private_region", "") != tokens.region
+                    plugin_cfg.get("unofficial_refresh_token") != tokens.refresh_token
+                    or plugin_cfg.get("unofficial_uuid", "") != tokens.uuid
+                    or plugin_cfg.get("unofficial_region", "") != tokens.region
                 )
-                plugin_cfg["private_access_token"] = tokens.access_token
-                plugin_cfg["private_refresh_token"] = tokens.refresh_token
-                plugin_cfg["private_uuid"] = tokens.uuid
-                plugin_cfg["private_region"] = tokens.region
+                plugin_cfg["unofficial_access_token"] = tokens.access_token
+                plugin_cfg["unofficial_refresh_token"] = tokens.refresh_token
+                plugin_cfg["unofficial_uuid"] = tokens.uuid
+                plugin_cfg["unofficial_region"] = tokens.region
                 if changed:
                     save_plugin_config(plugin_cfg)
-                private_client = NavimowPrivateClient(
-                    session, plugin_cfg["private_client_device_id"],
-                    tokens=tokens, uid=plugin_cfg.get("private_uid", ""),
+                unofficial_client = NavimowUnofficialClient(
+                    session, plugin_cfg["unofficial_client_device_id"],
+                    tokens=tokens, uid=plugin_cfg.get("unofficial_uid", ""),
                     region=tokens.region or "fra",
-                    host=plugin_cfg.get("private_host") or "navimow-fra.ninebot.com",
+                    host=plugin_cfg.get("unofficial_host") or "navimow-fra.ninebot.com",
                 )
-                LOGOK("Private API session established")
+                LOGOK("Unofficial API session established")
             except Exception as e:
-                LOGERR(f"Private API session could not be established: {e}")
-                private_client = None
-        _update_private_auth_status(plugin_cfg, base_topic)
+                LOGERR(f"Unofficial API session could not be established: {e}")
+                unofficial_client = None
+        _update_unofficial_auth_status(plugin_cfg, base_topic)
 
         mqtt_info = await rest_init(plugin_cfg, session)
 
@@ -1456,13 +1456,13 @@ async def main() -> None:
             ),
             asyncio.create_task(
                 task_mqtt_to_navimow(session, plugin_cfg, base_topic, broker,
-                                      private_client, _shutdown_event)
+                                      unofficial_client, _shutdown_event)
             ),
             asyncio.create_task(
                 task_token_refresh(plugin_cfg, session, cloud_mqtt, base_topic, _shutdown_event)
             ),
             asyncio.create_task(
-                task_private_token_refresh(plugin_cfg, session, private_client,
+                task_unofficial_token_refresh(plugin_cfg, session, unofficial_client,
                                             base_topic, _shutdown_event)
             ),
             asyncio.create_task(
@@ -1492,7 +1492,7 @@ async def main() -> None:
             async with aiomqtt.Client(**_build_mqtt_kwargs(broker)) as lbmqtt:
                 await lbmqtt.publish(gw_topic, json.dumps({"state": "stopped"}), retain=True)
                 await lbmqtt.publish(
-                    f"{base_topic}/gateway_private",
+                    f"{base_topic}/gateway_unofficial",
                     json.dumps({"state": "stopped", "authenticated": False, "expires_at": 0}),
                     retain=True,
                 )

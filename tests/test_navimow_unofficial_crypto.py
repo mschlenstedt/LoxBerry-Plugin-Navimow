@@ -1,7 +1,7 @@
 import base64
 import json
 
-from navimow_private_crypto import pack, decode_response, SESSION_KEY, _aes_cbc_enc
+from navimow_unofficial_crypto import pack, decode_response, SESSION_KEY, _aes_cbc_enc
 
 
 def test_pack_envelope_shape():
@@ -10,9 +10,9 @@ def test_pack_envelope_shape():
     assert env["p"] == "101"
     assert env["t"] == "0"
     assert len(env["h"]) == 32
-    int(env["h"], 16)  # gueltiges Hex
+    int(env["h"], 16)  # gültiges Hex
     assert len(base64.b64decode(env["k"])) == 128  # RSA-1024-Block
-    base64.b64decode(env["d"])  # gueltiges Base64
+    base64.b64decode(env["d"])  # gültiges Base64
 
 
 def test_decode_response_roundtrip():

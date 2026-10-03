@@ -42,9 +42,9 @@ case "$ACTION" in
 
     # Register log entry in LoxBerry log database and get filename + dbkey.
     #
-    # Zwei Dinge muessen hier stimmen, sonst taucht im Log-Manager der WebUI
+    # Zwei Dinge müssen hier stimmen, sonst taucht im Log-Manager der WebUI
     # nichts auf (und der Boot-Start fiel still auf die Notfall-Logdatei ohne
-    # DB-Eintrag zurueck):
+    # DB-Eintrag zurück):
     #   - package MUSS der reine Pluginordner sein ('navimow'). loglist_html()
     #     sucht mit WHERE PACKAGE = '<ordner>'; ein voller Pfad findet nie etwas.
     #   - logdir MUSS gesetzt sein. Die Auto-Erkennung von LoxBerry::Log leitet
