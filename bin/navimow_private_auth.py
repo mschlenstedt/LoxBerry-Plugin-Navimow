@@ -6,6 +6,7 @@ REST-Pfad genutzt wird (kein zweiter TLS-Verbindungsaufbau je Login).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from dataclasses import dataclass
@@ -110,7 +111,7 @@ async def lookup_region(session: aiohttp.ClientSession, email: str,
         params = {"account": email, "device": DEVICE}
         try:
             j = await _request(session, host, "/v3/region", params, method="GET", timeout=15)
-        except (aiohttp.ClientError, TimeoutError):
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             continue
         code = str(j.get("resultCode"))
         if code == _RESULT_OK:

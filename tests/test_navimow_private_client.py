@@ -2,7 +2,7 @@ import pytest
 
 import navimow_private_auth as auth
 import navimow_private_client as client_module
-from navimow_private_client import NavimowPrivateClient
+from navimow_private_client import NavimowAuthError, NavimowError, NavimowPrivateClient
 
 
 class _FakeResponse:
@@ -24,7 +24,7 @@ class _FakeSession:
         self._responses = list(responses)
         self.calls = []
 
-    def post(self, url, json=None, headers=None):
+    def post(self, url, json=None, headers=None, **kwargs):
         self.calls.append((url, json))
         return _FakeResponse(self._responses.pop(0))
 
@@ -82,3 +82,22 @@ async def test_call_raises_navimow_error_on_business_failure():
 
     with pytest.raises(NavimowError):
         await c.dock("SN1")
+
+
+@pytest.mark.asyncio
+async def test_call_reports_retry_code_after_reauth():
+    responses = [
+        {"code": 401903, "desc": "token expired"},   # 1. Auth-Fehler
+        {"code": 1, "data": {"uid": "42"}},            # 2. mower_login ok
+        {"code": 5001, "desc": "refused"},             # 3. Retry: anderer Fehler
+    ]
+    session = _FakeSession(responses)
+    tokens = auth.Tokens(access_token="AT", refresh_token="RT", uuid="U", region="fra")
+    c = NavimowPrivateClient(session, "clientdev", tokens=tokens, uid="99",
+                              host="navimow-fra.ninebot.com")
+
+    with pytest.raises(NavimowError) as exc:
+        await c.call("/vehicle/vehicle/index2", {"vehicle_sn": "SN1"})
+
+    assert not isinstance(exc.value, NavimowAuthError)
+    assert exc.value.code == 5001

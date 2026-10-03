@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -35,7 +36,7 @@ def _load_json(path: Path) -> dict:
 
 
 def _save_json_atomic(path: Path, data: dict) -> None:
-    tmp = path.with_suffix(".tmp")
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     tmp.replace(path)
@@ -60,7 +61,16 @@ def _match_devices(official: list, private: list) -> list:
 
 async def _do_login(configdir: Path, email: str, password: str) -> dict:
     plugin_cfg_path = configdir / "pluginconfig.json"
-    cfg = _load_json(plugin_cfg_path)
+    if plugin_cfg_path.exists():
+        try:
+            with open(plugin_cfg_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            return {"ok": False, "error": "pluginconfig.json unreadable"}
+        if not isinstance(cfg, dict):
+            return {"ok": False, "error": "pluginconfig.json unreadable"}
+    else:
+        cfg = {}
     cfg.setdefault("private_client_device_id", uuid.uuid4().hex)
 
     async with aiohttp.ClientSession() as session:

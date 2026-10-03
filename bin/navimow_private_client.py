@@ -14,6 +14,8 @@ import os
 import time
 from typing import Any
 
+import aiohttp
+
 import navimow_private_crypto as crypto
 from navimow_private_auth import Tokens
 
@@ -94,7 +96,10 @@ class NavimowPrivateClient:
 
     async def _post(self, path: str, envelope: dict) -> dict:
         url = f"https://{self._host}{path}"
-        async with self._session.post(url, json=envelope, headers=_HEADERS) as resp:
+        async with self._session.post(
+            url, json=envelope, headers=_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
             return await resp.json(content_type=None)
 
     async def _raw(self, path: str, business: dict) -> dict:
@@ -154,7 +159,8 @@ class NavimowPrivateClient:
             if extra:
                 body.update(extra)
             result = await self._raw(path, body)
-            if isinstance(result, dict) and result.get("code") == CODE_OK:
+            code = result.get("code") if isinstance(result, dict) else None
+            if code == CODE_OK:
                 return result.get("data")
 
         desc = str(result.get("desc", "")) if isinstance(result, dict) else str(result)

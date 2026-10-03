@@ -148,14 +148,17 @@ function updatePrivateStatus() {
         .then(data => {
             const badge = document.getElementById('private_status_badge');
             if (!badge) return;
-            if (data.ok) {
-                badge.textContent = window.L_PRIVATE_STATUS_CONNECTED || 'Verbunden';
+            if (data.ok && !data.devices_mapped) {
+                badge.textContent = '<TMPL_VAR "PRIVATE.STATUS_NO_DEVICE_MATCH">';
+                badge.className = 'lb-badge lb-badge-warning';
+            } else if (data.ok) {
+                badge.textContent = '<TMPL_VAR "PRIVATE.STATUS_CONNECTED">';
                 badge.className = 'lb-badge lb-badge-success';
             } else if (data.has_refresh) {
-                badge.textContent = window.L_PRIVATE_STATUS_NOT_CONNECTED || 'Nicht verbunden';
+                badge.textContent = '<TMPL_VAR "PRIVATE.STATUS_NOT_CONNECTED">';
                 badge.className = 'lb-badge lb-badge-warning';
             } else {
-                badge.textContent = window.L_PRIVATE_STATUS_NOT_CONNECTED || 'Nicht verbunden';
+                badge.textContent = '<TMPL_VAR "PRIVATE.STATUS_NOT_CONNECTED">';
                 badge.className = 'lb-badge lb-badge-danger';
             }
         })
@@ -169,7 +172,7 @@ function submitPrivateLogin() {
     errorBox.style.display = 'none';
 
     if (!email || !password) {
-        errorBox.textContent = 'E-Mail und Passwort erforderlich';
+        errorBox.textContent = '<TMPL_VAR "PRIVATE.ERR_REQUIRED">';
         errorBox.style.display = 'block';
         return;
     }
@@ -182,12 +185,13 @@ function submitPrivateLogin() {
             if (data.ok) {
                 updatePrivateStatus();
             } else {
-                errorBox.textContent = data.error || 'Login fehlgeschlagen';
+                errorBox.textContent = data.error || '<TMPL_VAR "PRIVATE.ERR_LOGIN_FAILED">';
                 errorBox.style.display = 'block';
             }
         })
         .catch(() => {
-            errorBox.textContent = 'Netzwerkfehler beim Login';
+            document.getElementById('private_password').value = '';
+            errorBox.textContent = '<TMPL_VAR "PRIVATE.ERR_NETWORK">';
             errorBox.style.display = 'block';
         });
 }

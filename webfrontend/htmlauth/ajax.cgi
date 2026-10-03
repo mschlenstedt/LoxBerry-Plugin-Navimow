@@ -6,6 +6,7 @@ use CGI;
 use JSON;
 use IPC::Open2;
 use POSIX qw(setsid);
+use Encode qw(decode);
 use LoxBerry::System;
 use LoxBerry::IO;
 use LoxBerry::Log;
@@ -80,6 +81,10 @@ sub action_stop {
 }
 
 sub action_restart {
+    print encode_json(do_restart());
+}
+
+sub do_restart {
     my $pid = read_pid();
     if (defined $pid && pid_running($pid)) {
         kill('TERM', $pid);
@@ -119,15 +124,13 @@ sub action_restart {
     $loglevel //= 7;
 
     unless (-f $gateway) {
-        print encode_json({ ok => 0, error => "Gateway not found: $gateway" });
-        return;
+        return { ok => 0, error => "Gateway not found: $gateway" };
     }
 
     # Double-fork to detach gateway from CGI process; use exec list form (no shell)
     my $child = fork();
     if (!defined $child) {
-        print encode_json({ ok => 0, error => "fork failed: $!" });
-        return;
+        return { ok => 0, error => "fork failed: $!" };
     }
     if ($child == 0) {
         my $gc = fork();
@@ -158,9 +161,9 @@ sub action_restart {
     }
 
     if (defined $new_pid) {
-        print encode_json({ ok => 1, pid => $new_pid+0 });
+        return { ok => 1, pid => $new_pid+0 };
     } else {
-        print encode_json({ ok => 0, error => 'Gateway did not start' });
+        return { ok => 0, error => 'Gateway did not start' };
     }
 }
 
@@ -202,8 +205,8 @@ sub action_gettokenstatus {
 }
 
 sub action_privatelogin {
-    my $email    = $cgi->param('email')    // '';
-    my $password = $cgi->param('password') // '';
+    my $email    = decode('UTF-8', $cgi->param('email')    // '');
+    my $password = decode('UTF-8', $cgi->param('password') // '');
     unless ($email ne '' && $password ne '') {
         print encode_json({ ok => 0, error => 'E-Mail und Passwort erforderlich' });
         return;
@@ -219,10 +222,19 @@ sub action_privatelogin {
 
     my $stdin_json = encode_json({ email => $email, password => $password });
 
-    my $pid = open2(my $out, my $in, 'python3', $helper, '--configdir', $lbpconfigdir);
+    local $SIG{PIPE} = 'IGNORE';
+    my ($pid, $out, $in, $result_line);
+    my $started = eval {
+        $pid = open2($out, $in, 'python3', $helper, '--configdir', $lbpconfigdir);
+        1;
+    };
+    unless ($started) {
+        print encode_json({ ok => 0, error => 'Login-Helfer konnte nicht gestartet werden' });
+        return;
+    }
     print $in $stdin_json;
     close $in;
-    my $result_line = <$out>;
+    $result_line = <$out>;
     close $out;
     waitpid($pid, 0);
 
@@ -230,6 +242,10 @@ sub action_privatelogin {
     if (!$result) {
         print encode_json({ ok => 0, error => 'Login-Helfer lieferte keine gueltige Antwort' });
         return;
+    }
+    if ($result->{ok}) {
+        my $r = do_restart();
+        $result->{restarted} = ($r->{ok} ? JSON::true : JSON::false);
     }
     print encode_json($result);
 }

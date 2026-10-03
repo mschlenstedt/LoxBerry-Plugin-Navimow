@@ -14,13 +14,11 @@ echo "<INFO> Navimow: installing Python dependencies as root..."
 pip3 install --quiet \
     "aiomqtt>=2.0,<3.0" \
     "paho-mqtt>=1.6,<3.0" \
-    aiohttp \
-    cryptography 2>/dev/null \
+    aiohttp 2>/dev/null \
 || pip3 install --break-system-packages --quiet \
     "aiomqtt>=2.0,<3.0" \
     "paho-mqtt>=1.6,<3.0" \
-    aiohttp \
-    cryptography
+    aiohttp
 
 if [ $? -ne 0 ]; then
     echo "<FAIL> Navimow: pip3 install failed"
@@ -28,4 +26,13 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "<OK> Navimow: Python dependencies installed successfully"
+
+# Optional: nur fuer die private API. Ein Fehlschlag darf die Installation
+# und den offiziellen Pfad nicht beeintraechtigen.
+pip3 install --quiet "cryptography" 2>/dev/null \
+|| pip3 install --break-system-packages --quiet "cryptography"
+if [ $? -ne 0 ]; then
+    echo "<WARNING> Navimow: cryptography could not be installed — private API disabled, official API unaffected"
+fi
+
 exit 0
