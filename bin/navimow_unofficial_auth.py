@@ -105,17 +105,23 @@ async def lookup_region(session: aiohttp.ClientSession, email: str,
     """Welcher Regional-Server besitzt diesen Account? ``None`` wenn keiner.
 
     Braucht nur die E-Mail -- das Passwort geht nie an einen Server, der den
-    Account gar nicht kennt.
+    Account gar nicht kennt. Antwortet kein einziger Server, wird das nicht als
+    "Frankfurt" geraten, sonst schickt ein kurzer Netzwerkfehler das Passwort an
+    die falsche Region (navimow_pro 9e5a814).
     """
+    answered = False
     for host in hosts or ALL_PASSPORT_HOSTS:
         params = {"account": email, "device": DEVICE}
         try:
             j = await _request(session, host, "/v3/region", params, method="GET", timeout=15)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             continue
+        answered = True
         code = str(j.get("resultCode"))
         if code == _RESULT_OK:
             return (j.get("data") or {}).get("region")
+    if not answered:
+        raise PassportError("network", "no passport directory answered; account region unknown")
     return None
 
 
@@ -158,20 +164,30 @@ async def login(session: aiohttp.ClientSession, username: str, password: str,
 
 async def refresh(session: aiohttp.ClientSession, tokens: Tokens,
                    region: str | None = None) -> Tokens:
-    """POST /v3/user/refresh -> neue Tokens (verlängert sich immer wieder)."""
+    """POST /v3/user/refresh -> neue Tokens.
+
+    Probiert alle Hosts der Region wie der Login. Ein Host, der antwortet und
+    ablehnt, ist endgültig; nur ein unerreichbarer Host wird übersprungen.
+    """
     params = {
         "access_token": tokens.access_token,
         "refresh_token": tokens.refresh_token,
         "device": DEVICE,
     }
-    host = passport_hosts(region or tokens.region)[0]
-    j = await _request(session, host, "/v3/user/refresh", params, method="POST")
-    code = str(j.get("resultCode"))
-    if code != _RESULT_OK:
-        raise PassportAuthError(code, str(j.get("resultDesc", "")))
-    new = _extract_tokens(j.get("data") or {})
-    if not new.uuid:
-        new.uuid = tokens.uuid
-    if not new.region:
-        new.region = tokens.region
-    return new
+    unreachable: Exception | None = None
+    for host in passport_hosts(region or tokens.region):
+        try:
+            j = await _request(session, host, "/v3/user/refresh", params, method="POST")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            unreachable = err
+            continue
+        code = str(j.get("resultCode"))
+        if code != _RESULT_OK:
+            raise PassportAuthError(code, str(j.get("resultDesc", "")))
+        new = _extract_tokens(j.get("data") or {})
+        if not new.uuid:
+            new.uuid = tokens.uuid
+        if not new.region:
+            new.region = tokens.region
+        return new
+    raise PassportError("network", f"no passport host could be reached ({unreachable})")
