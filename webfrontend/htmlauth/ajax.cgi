@@ -33,6 +33,10 @@ if ($action eq 'getpid') {
     action_unofficiallogin();
 } elsif ($action eq 'getunofficialstatus') {
     action_getunofficialstatus();
+} elsif ($action eq 'unofficiallogout') {
+    action_unofficiallogout();
+} elsif ($action eq 'unofficialmap') {
+    action_unofficialmap();
 } else {
     print encode_json({ error => "Unknown action: $action" });
 }
@@ -193,23 +197,38 @@ sub action_gettokenstatus {
     my $data = eval { decode_json($raw) } // {};
     my $authenticated = $data->{authenticated} ? 1 : 0;
     my $expires_at    = $data->{expires_at}    // 0;
-    my $token         = $data->{token}         // '';
     my $now           = time();
     my $expires_in    = ($expires_at > $now) ? int($expires_at - $now) : 0;
 
     print encode_json({
         ok          => $authenticated,
-        token       => $token,
         expires_in  => $expires_in+0,
         has_refresh => $has_refresh,
     });
+}
+
+sub read_cfg {
+    return {} unless -f $plugin_cfg;
+    local $/;
+    open(my $fh, '<', $plugin_cfg) or return undef;
+    my $cfg = eval { decode_json(<$fh>) };
+    return ref $cfg eq 'HASH' ? $cfg : undef;
+}
+
+sub write_cfg {
+    my ($cfg) = @_;
+    my $tmp = "$plugin_cfg.tmp.$$";
+    open(my $fh, '>', $tmp) or return 0;
+    print $fh JSON->new->utf8->pretty->canonical->encode($cfg);
+    close $fh or return 0;
+    return rename($tmp, $plugin_cfg) ? 1 : 0;
 }
 
 sub action_unofficiallogin {
     my $email    = decode('UTF-8', $cgi->param('email')    // '');
     my $password = decode('UTF-8', $cgi->param('password') // '');
     unless ($email ne '' && $password ne '') {
-        print encode_json({ ok => 0, error => 'E-Mail und Passwort erforderlich' });
+        print encode_json({ ok => 0, code => 'required', error => 'E-Mail und Passwort erforderlich' });
         return;
     }
 
@@ -245,36 +264,81 @@ sub action_unofficiallogin {
         return;
     }
     if ($result->{ok}) {
+        $result->{ts} = time();
         my $r = do_restart();
         $result->{restarted} = ($r->{ok} ? JSON::true : JSON::false);
     }
     print encode_json($result);
 }
 
-sub action_getunofficialstatus {
-    my $cfg = {};
-    if (-f $plugin_cfg) {
-        local $/;
-        if (open(my $fh, '<', $plugin_cfg)) {
-            eval { $cfg = decode_json(<$fh>); };
-        }
-    }
-    my $base_topic     = $cfg->{base_topic}          // 'navimow';
-    my $has_refresh    = ($cfg->{unofficial_refresh_token} // '') ne '' ? 1 : 0;
-    my $devices_mapped = ref $cfg->{unofficial_devices} eq 'ARRAY' ? scalar(@{$cfg->{unofficial_devices}}) : 0;
-
-    my $raw = LoxBerry::IO::mqtt_get("$base_topic/gateway_unofficial");
-    unless (defined $raw && $raw ne '') {
-        print encode_json({ ok => 0, has_refresh => $has_refresh,
-                             devices_mapped => $devices_mapped });
+sub action_unofficiallogout {
+    my $cfg = read_cfg();
+    unless ($cfg) {
+        print encode_json({ ok => 0, error => 'pluginconfig.json nicht lesbar' });
         return;
     }
+    $cfg->{unofficial_enabled} = JSON::false;
+    $cfg->{$_} = '' for qw(unofficial_access_token unofficial_refresh_token unofficial_uuid
+                           unofficial_uid unofficial_region unofficial_host);
+    $cfg->{unofficial_devices}  = [];
+    $cfg->{unofficial_vehicles} = [];
+    unless (write_cfg($cfg)) {
+        print encode_json({ ok => 0, error => 'pluginconfig.json nicht schreibbar' });
+        return;
+    }
+    my $ts = time();
+    my $r  = do_restart();
+    print encode_json({ ok => 1, ts => $ts, restarted => ($r->{ok} ? JSON::true : JSON::false) });
+}
 
-    my $data = eval { decode_json($raw) } // {};
+sub action_unofficialmap {
+    my $device_id  = decode('UTF-8', $cgi->param('device_id')  // '');
+    my $vehicle_sn = decode('UTF-8', $cgi->param('vehicle_sn') // '');
+    my $cfg = read_cfg();
+    unless ($cfg) {
+        print encode_json({ ok => 0, error => 'pluginconfig.json nicht lesbar' });
+        return;
+    }
+    my ($vehicle) = grep { ($_->{vehicle_sn} // '') eq $vehicle_sn } @{ $cfg->{unofficial_vehicles} // [] };
+    my ($device)  = grep { ($_->{device_id}  // '') eq $device_id  } @{ $cfg->{devices} // [] };
+    unless ($vehicle && $device) {
+        print encode_json({ ok => 0, error => 'Unbekannter Mäher' });
+        return;
+    }
+    my @mapping = grep { ($_->{device_id} // '') ne $device_id } @{ $cfg->{unofficial_devices} // [] };
+    push @mapping, { device_id => $device_id, vehicle_sn => $vehicle_sn,
+                     vehicle_type => ($vehicle->{vehicle_type} // 0) + 0 };
+    $cfg->{unofficial_devices} = \@mapping;
+    unless (write_cfg($cfg)) {
+        print encode_json({ ok => 0, error => 'pluginconfig.json nicht schreibbar' });
+        return;
+    }
+    my $ts = time();
+    my $r  = do_restart();
+    print encode_json({ ok => 1, ts => $ts, restarted => ($r->{ok} ? JSON::true : JSON::false) });
+}
+
+sub action_getunofficialstatus {
+    my $cfg = read_cfg() // {};
+    my $base_topic = $cfg->{base_topic} // 'navimow';
+    my @mapping  = ref $cfg->{unofficial_devices}  eq 'ARRAY' ? @{ $cfg->{unofficial_devices} }  : ();
+    my @vehicles = ref $cfg->{unofficial_vehicles} eq 'ARRAY' ? @{ $cfg->{unofficial_vehicles} } : ();
+    my @devices  = ref $cfg->{devices}             eq 'ARRAY' ? @{ $cfg->{devices} }             : ();
+
+    my $raw  = LoxBerry::IO::mqtt_get("$base_topic/gateway_unofficial");
+    my $data = (defined $raw && $raw ne '') ? (eval { decode_json($raw) } // {}) : {};
+
     print encode_json({
-        ok             => $data->{authenticated} ? 1 : 0,
-        has_refresh    => $has_refresh,
-        devices_mapped => $devices_mapped,
+        enabled    => $cfg->{unofficial_enabled} ? 1 : 0,
+        ok         => $data->{authenticated} ? 1 : 0,
+        state      => $data->{state} // '',
+        error      => $data->{error} // '',
+        since      => ($data->{since} // 0) + 0,
+        ts         => ($data->{ts} // 0) + 0,
+        base_topic => $base_topic,
+        mapping    => [ map { { device_id => $_->{device_id}, vehicle_sn => $_->{vehicle_sn} } } @mapping ],
+        vehicles   => [ map { { vehicle_sn => $_->{vehicle_sn}, name => $_->{name} // '' } } @vehicles ],
+        devices    => [ map { { device_id => $_->{device_id}, name => $_->{name} // '' } } @devices ],
     });
 }
 

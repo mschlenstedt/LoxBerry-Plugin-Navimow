@@ -46,7 +46,17 @@
     <tr>
       <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/command_result</td>
       <td>OUT</td><td>&mdash;</td>
-      <td>command, result, result_num, reason</td>
+      <td>command, source (official|unofficial), result, result_num, reason</td>
+    </tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set_unofficial</td>
+      <td>IN</td><td>&mdash;</td>
+      <td>JSON: {"cmd":"pause"} &nbsp;|&nbsp; {"cmd":"dock"} &nbsp;|&nbsp; {"cmd":"resume"} &mdash; nur mit Anmeldung unter „Erweiterte Befehle“</td>
+    </tr>
+    <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/gateway_unofficial</td>
+      <td>OUT</td><td>&#10003;</td>
+      <td>state, enabled, authenticated, error, since, ts</td>
     </tr>
     <tr>
       <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/gateway</td>

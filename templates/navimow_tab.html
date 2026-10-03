@@ -1,114 +1,126 @@
 <style>
-.lb-badge {
-  display: inline-block;
-  padding: 0.25em 0.65em;
-  font-size: 0.85em;
-  font-weight: 600;
-  line-height: 1;
-  border-radius: 0.35em;
-  white-space: nowrap;
-}
-.lb-badge-success { background: #6dac20; color: #fff; }
-.lb-badge-warning { background: #f5a623; color: #000; }
-.lb-badge-danger  { background: #d0021b; color: #fff; }
+.nm { --nm-ok: var(--lb-success, #6dac20); --nm-warn: var(--lb-warning, #ca8a04); --nm-err: var(--lb-danger, #dc2626);
+      --nm-info: var(--lb-info, #0a4586); --nm-idle: #9e9e9e; --nm-card: var(--lb-card-bg, #fff);
+      --nm-text: var(--lb-text, #171717); --nm-muted: var(--lb-text-muted, #737373); --nm-border: var(--lb-border-color, #e5e5e5);
+      display: grid; gap: 16px; margin-bottom: 1.5rem; }
+.nm-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.nm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .nm-strip, .nm-grid { grid-template-columns: 1fr; } }
+.nm .lb-card { padding: 0; margin: 0; min-width: 0; overflow: hidden; }
+.nm-tile { padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+.nm-split { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.nm-eyebrow { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--nm-muted); font-weight: 600; }
+.nm-desc { font-size: .85rem; color: var(--nm-muted); }
+.nm-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--nm-border); }
+.nm-head h3 { margin: 0; font-size: 1rem; display: flex; align-items: center; gap: 8px; }
+.nm-body { padding: 16px; display: grid; gap: 14px; }
+.nm-foot { padding: 12px 16px; border-top: 1px solid var(--nm-border); display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+.nm-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.nm-tag { font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--nm-border); color: var(--nm-muted); }
+
+.nm-pill { --k: var(--nm-idle); display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px 3px 8px; border-radius: 999px;
+           font-size: .82rem; font-weight: 600; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+           background: color-mix(in srgb, var(--k) 15%, var(--nm-card)); color: color-mix(in srgb, var(--k) 70%, var(--nm-text)); }
+.nm-pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--k); flex: none; }
+.nm-pill.ok { --k: var(--nm-ok); } .nm-pill.warn { --k: var(--nm-warn); } .nm-pill.err { --k: var(--nm-err); } .nm-pill.info { --k: var(--nm-info); }
+.nm-pill.spin::before { background: none; border: 2px solid currentColor; border-right-color: transparent; width: 10px; height: 10px; animation: nm-spin .8s linear infinite; }
+
+.nm-kv { display: grid; grid-template-columns: minmax(8rem, 11rem) 1fr; gap: 8px 16px; align-items: baseline; margin: 0; }
+.nm-kv dt { color: var(--nm-muted); font-size: .9rem; }
+.nm-kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .nm-kv { grid-template-columns: 1fr; gap: 2px; } .nm-kv dd { margin-bottom: 8px; } }
+.nm-devices { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.nm-mono { font-family: var(--lb-font-mono, Consolas, Monaco, monospace); font-size: .85rem; color: var(--nm-muted); }
+
+.nm-note { --k: var(--nm-info); padding: 10px 12px; border-radius: var(--lb-radius, 4px); font-size: .9rem; display: flex; gap: 10px; align-items: flex-start;
+           background: color-mix(in srgb, var(--k) 12%, var(--nm-card)); color: color-mix(in srgb, var(--k) 70%, var(--nm-text)); }
+.nm-note.ok { --k: var(--nm-ok); } .nm-note.warn { --k: var(--nm-warn); } .nm-note.err { --k: var(--nm-err); }
+.nm-note b.nm-ico { flex: none; width: 1.2em; text-align: center; }
+.nm-hint { font-size: .85rem; color: var(--nm-muted); margin: 0; }
+.nm-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 640px) { .nm-form { grid-template-columns: 1fr; } }
+.nm-field { display: grid; gap: 5px; min-width: 0; }
+.nm-field label { font-size: .88rem; font-weight: 600; }
+.nm-field .lb-input, .nm-field .lb-select { width: 100%; min-width: 0; box-sizing: border-box; }
+.nm-field [aria-invalid="true"] { border-color: var(--nm-err) !important; }
+.nm-fielderr { font-size: .85rem; color: var(--nm-err); margin: 0; }
+
+.nm-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 560px) { .nm-steps { grid-template-columns: 1fr; } }
+.nm-steps li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: center; font-size: .85rem; color: var(--nm-muted); }
+.nm-steps .nm-mark { width: 22px; height: 22px; box-sizing: border-box; border-radius: 50%; display: grid; place-items: center; font-size: .72rem; font-weight: 700; border: 2px solid var(--nm-border); }
+.nm-steps li.active { color: var(--nm-text); font-weight: 600; } .nm-steps li.active .nm-mark { border-color: var(--nm-info); color: var(--nm-info); }
+.nm-steps li.done .nm-mark { background: var(--nm-ok); border-color: var(--nm-ok); color: #fff; }
+.nm-steps li.fail { color: var(--nm-err); font-weight: 600; } .nm-steps li.fail .nm-mark { background: var(--nm-err); border-color: var(--nm-err); color: #fff; }
+.nm-steps li.active .nm-mark::after { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: nm-spin .8s linear infinite; }
+
+.nm .lb-btn[disabled], .nm .lb-btn.lb-disabled { opacity: .5; cursor: not-allowed; pointer-events: none; }
+.nm-spinner { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: nm-spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes nm-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .nm-pill.spin::before, .nm-spinner, .nm-steps li.active .nm-mark::after { animation: none; border-right-color: currentColor; } }
+.nm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 
 <TMPL_IF OAUTH_OK>
-<div class="lb-alert lb-alert-success"><TMPL_VAR "OAUTH.SUCCESS"></div>
+<div class="lb-alert lb-alert-success" style="margin-bottom:1rem;"><TMPL_VAR "OAUTH.SUCCESS"></div>
 </TMPL_IF>
 <TMPL_IF OAUTH_ERROR>
-<div class="lb-alert lb-alert-danger"><TMPL_VAR "OAUTH.ERROR">: <TMPL_VAR OAUTH_ERROR></div>
+<div class="lb-alert lb-alert-danger" style="margin-bottom:1rem;"><TMPL_VAR "OAUTH.ERROR">: <TMPL_VAR OAUTH_ERROR></div>
 </TMPL_IF>
 
-<!-- Gateway Status: status badge + buttons in one row -->
-<div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:1.5rem;">
-  <div id="gw_status_text" style="flex:1; min-height:3rem; padding:0.5rem 1rem; border-radius:4px; background:#9e9e9e; color:white; font-weight:500; display:flex; align-items:center;"><TMPL_VAR "GATEWAY.NOT_RUNNING"></div>
-  <a id="btn_restart" href="#" class="lb-btn lb-btn-sm lb-btn-icon">
-    <i class="pi pi-refresh"></i> <TMPL_VAR "GATEWAY.RESTART">
-  </a>
-  <a id="btn_stop" href="#" class="lb-btn lb-btn-sm lb-btn-icon">
-    <i class="pi pi-times"></i> <TMPL_VAR "GATEWAY.STOP">
-  </a>
-</div>
+<div class="nm" id="nm_root" data-base="<TMPL_VAR BASE_TOPIC>">
 
-<!-- Two cards: Authentifizierung | Geräte -->
-<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-start; margin-bottom:1.5rem;">
-
-  <!-- Authentication card -->
-  <div class="lb-card" style="flex:1 1 200px;">
-    <div class="lb-card-body">
-      <div class="lb-section-title"><TMPL_VAR "TOKEN.HEADER"></div>
-      <div class="lb-form-row">
-        <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_STATUS"></div>
-        <div class="lb-form-field">
-          <span id="token_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "TOKEN.NOT_AUTHENTICATED"></span>
-        </div>
+  <div class="nm-strip">
+    <div class="lb-card nm-tile">
+      <div class="nm-split"><span class="nm-eyebrow"><TMPL_VAR "GATEWAY.TITLE"></span><span id="nm_gw_pill" class="nm-pill">…</span></div>
+      <div class="nm-desc" id="nm_gw_desc"><TMPL_VAR "GATEWAY.DESC_RUNNING"></div>
+      <div class="nm-actions">
+        <button type="button" class="lb-btn lb-btn-sm" id="nm_btn_restart"><TMPL_VAR "GATEWAY.RESTART"></button>
+        <button type="button" class="lb-btn lb-btn-sm" id="nm_btn_stop"><TMPL_VAR "GATEWAY.STOP"></button>
+        <button type="button" class="lb-btn lb-btn-sm lb-btn-primary" id="nm_btn_start" hidden><TMPL_VAR "GATEWAY.START"></button>
       </div>
-      <div class="lb-form-row">
-        <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_TOKEN"></div>
-        <div class="lb-form-field" style="overflow:visible; min-width:0;">
-          <code id="token_value" style="word-break:break-all; overflow-wrap:break-word; white-space:normal; display:block; max-width:100%;">--</code>
-        </div>
-      </div>
-      <div class="lb-form-row">
-        <div class="lb-form-label"><TMPL_VAR "TOKEN.LABEL_EXPIRES"></div>
-        <div class="lb-form-field">
-          <span id="token_expires">--</span>
-        </div>
-      </div>
-      <div style="margin-top:0.75rem; text-align:center;">
-        <a id="btn_authenticate" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"
-           class="lb-btn lb-btn-primary">
-          <TMPL_VAR "TOKEN.BTN_AUTHENTICATE">
-        </a>
-      </div>
+    </div>
+    <div class="lb-card nm-tile">
+      <div class="nm-split"><span class="nm-eyebrow"><TMPL_VAR "TOKEN.HEADER"></span><span id="nm_off_pill" class="nm-pill">…</span></div>
+      <div class="nm-desc"><TMPL_VAR "TOKEN.DESC"></div>
+    </div>
+    <div class="lb-card nm-tile">
+      <div class="nm-split"><span class="nm-eyebrow"><TMPL_VAR "UNOFFICIAL.HEADER"></span><span id="nm_un_pill" class="nm-pill">…</span></div>
+      <div class="nm-desc" id="nm_un_short"></div>
     </div>
   </div>
 
-  <!-- Devices card -->
-  <div class="lb-card" style="flex:1 1 200px;">
-    <div class="lb-card-body">
-      <div class="lb-section-title"><TMPL_VAR "DEVICES.HEADER"></div>
-      <div id="devices_list">
-        <TMPL_IF HAS_DEVICES>
-          <ul class="lb-list">
-            <TMPL_LOOP DEVICES>
-              <li><TMPL_VAR DEVICE_NAME> <small>(<TMPL_VAR DEVICE_ID>)</small></li>
-            </TMPL_LOOP>
-          </ul>
-        <TMPL_ELSE>
-          <p><TMPL_VAR "DEVICES.NO_DEVICES"></p>
-        </TMPL_IF>
+  <div class="nm-grid">
+    <section class="lb-card" aria-labelledby="nm_off_title">
+      <div class="nm-head"><h3 id="nm_off_title"><TMPL_VAR "TOKEN.HEADER"></h3><span id="nm_off_pill2" class="nm-pill">…</span></div>
+      <div class="nm-body">
+        <dl class="nm-kv">
+          <dt><TMPL_VAR "TOKEN.LABEL_EXPIRES"></dt><dd id="nm_off_valid">–</dd>
+          <dt><TMPL_VAR "DEVICES.HEADER"></dt>
+          <dd>
+            <TMPL_IF HAS_DEVICES>
+              <ul class="nm-devices">
+                <TMPL_LOOP DEVICES>
+                  <li><b><TMPL_VAR DEVICE_NAME></b> <span class="nm-mono"><TMPL_VAR DEVICE_ID></span></li>
+                </TMPL_LOOP>
+              </ul>
+            <TMPL_ELSE>
+              <span class="nm-desc"><TMPL_VAR "DEVICES.NO_DEVICES"></span>
+            </TMPL_IF>
+          </dd>
+        </dl>
       </div>
-    </div>
+      <div class="nm-foot">
+        <a id="nm_btn_oauth" class="lb-btn lb-btn-sm" href="<TMPL_VAR OAUTH_AUTHORIZE_URL ESCAPE=NONE>"><TMPL_VAR "TOKEN.BTN_AUTHENTICATE"></a>
+      </div>
+    </section>
+
+    <section class="lb-card" aria-labelledby="nm_un_title">
+      <div class="nm-head"><h3 id="nm_un_title"><TMPL_VAR "UNOFFICIAL.HEADER"> <span class="nm-tag"><TMPL_VAR "UNOFFICIAL.TAG"></span></h3><span id="nm_un_pill2" class="nm-pill">…</span></div>
+      <div class="nm-body" id="nm_un_body"></div>
+      <div class="nm-foot" id="nm_un_foot"></div>
+    </section>
   </div>
 
-  <!-- Karte für die inoffizielle API -->
-  <div class="lb-card" style="flex:1 1 200px;">
-    <div class="lb-card-body">
-      <div class="lb-section-title"><TMPL_VAR "UNOFFICIAL.HEADER"></div>
-      <p style="font-size:0.85em; color:#777;"><TMPL_VAR "UNOFFICIAL.HINT"></p>
-      <div class="lb-form-row">
-        <div class="lb-form-label"><TMPL_VAR "UNOFFICIAL.LABEL_STATUS"></div>
-        <div class="lb-form-field">
-          <span id="unofficial_status_badge" class="lb-badge lb-badge-danger"><TMPL_VAR "UNOFFICIAL.STATUS_NOT_CONNECTED"></span>
-        </div>
-      </div>
-      <div class="lb-form-row">
-        <div class="lb-form-label"><label for="unofficial_email"><TMPL_VAR "UNOFFICIAL.LABEL_EMAIL"></label></div>
-        <div class="lb-form-field"><input type="email" id="unofficial_email" class="lb-input"></div>
-      </div>
-      <div class="lb-form-row">
-        <div class="lb-form-label"><label for="unofficial_password"><TMPL_VAR "UNOFFICIAL.LABEL_PASSWORD"></label></div>
-        <div class="lb-form-field"><input type="password" id="unofficial_password" class="lb-input"></div>
-      </div>
-      <div style="margin-top:0.75rem; text-align:center;">
-        <a id="btn_unofficial_connect" href="#" class="lb-btn lb-btn-primary">
-          <TMPL_VAR "UNOFFICIAL.BTN_CONNECT">
-        </a>
-      </div>
-      <div id="unofficial_connect_error" class="lb-alert lb-alert-danger" style="display:none; margin-top:0.5rem;"></div>
-    </div>
-  </div>
-
+  <div class="nm-sr" aria-live="polite" id="nm_live"></div>
 </div>

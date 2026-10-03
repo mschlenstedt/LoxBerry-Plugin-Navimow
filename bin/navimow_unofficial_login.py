@@ -59,6 +59,24 @@ def _match_devices(official: list, unofficial: list) -> list:
     return []
 
 
+def _vehicle_list(unofficial: list) -> list:
+    return [{
+        "vehicle_sn": str(v.get("vehicle_sn", "")),
+        "vehicle_type": int(v.get("vehicle_type", 0) or 0),
+        "name": str(v.get("vehicle_name") or v.get("name") or ""),
+    } for v in unofficial if v.get("vehicle_sn")]
+
+
+def _resolve_mapping(official: list, unofficial: list, existing: list) -> list:
+    """Automatische Zuordnung, sonst eine frühere manuelle, solange ihre Mäher noch im Konto sind."""
+    matched = _match_devices(official, unofficial)
+    if matched:
+        return matched
+    known = {str(v.get("vehicle_sn", "")) for v in unofficial}
+    kept = [m for m in existing if isinstance(m, dict) and m.get("vehicle_sn") in known]
+    return kept
+
+
 async def _do_login(configdir: Path, email: str, password: str) -> dict:
     plugin_cfg_path = configdir / "pluginconfig.json"
     if plugin_cfg_path.exists():
@@ -84,23 +102,24 @@ async def _do_login(configdir: Path, email: str, password: str) -> dict:
         unofficial_devices = await client.auth_list()
 
     official_devices = cfg.get("devices", [])
-    matched = _match_devices(official_devices, unofficial_devices)
+    mapping = _resolve_mapping(official_devices, unofficial_devices, cfg.get("unofficial_devices", []))
 
     cfg["unofficial_region"] = tokens.region or ""
     cfg["unofficial_uuid"] = tokens.uuid
+    cfg["unofficial_access_token"] = tokens.access_token
     cfg["unofficial_refresh_token"] = tokens.refresh_token
     cfg["unofficial_uid"] = client.uid
     cfg["unofficial_host"] = host
     cfg["unofficial_enabled"] = True
-    if matched:
-        cfg["unofficial_devices"] = matched
+    cfg["unofficial_vehicles"] = _vehicle_list(unofficial_devices)
+    cfg["unofficial_devices"] = mapping
     _save_json_atomic(plugin_cfg_path, cfg)
 
     return {
         "ok": True,
         "devices_total_official": len(official_devices),
         "devices_total_unofficial": len(unofficial_devices),
-        "devices_matched": len(matched),
+        "devices_matched": len(mapping),
     }
 
 
@@ -120,10 +139,13 @@ def main() -> int:
     try:
         result = asyncio.run(_do_login(Path(args.configdir), email, password))
     except (auth.PassportError, NavimowError) as e:
-        print(json.dumps({"ok": False, "error": str(e)}))
+        print(json.dumps({"ok": False, "code": str(e.code), "error": str(e.desc or e)}))
+        return 1
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        print(json.dumps({"ok": False, "code": "network", "error": str(e) or type(e).__name__}))
         return 1
     except Exception as e:
-        print(json.dumps({"ok": False, "error": f"unexpected error: {e}"}))
+        print(json.dumps({"ok": False, "code": "unexpected", "error": str(e)}))
         return 1
 
     print(json.dumps(result))

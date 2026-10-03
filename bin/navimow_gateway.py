@@ -143,7 +143,7 @@ def load_general_config() -> dict:
     return _load_json(GENERAL_JSON)
 
 
-_EPHEMERAL_FIELDS = frozenset(("access_token", "expires_at", "token_type", "unofficial_access_token"))
+_EPHEMERAL_FIELDS = frozenset(("access_token", "expires_at", "token_type"))
 
 
 def load_plugin_config() -> dict:
@@ -161,15 +161,18 @@ def load_plugin_config() -> dict:
     cfg.setdefault("unofficial_region",          "")
     cfg.setdefault("unofficial_uuid",            "")
     cfg.setdefault("unofficial_refresh_token",   "")
+    # Anders als beim offiziellen OAuth verlangt der Passport-Refresh auch den
+    # Access-Token (leer -> "90002 args missing"), er muss also auf die Platte.
+    cfg.setdefault("unofficial_access_token",    "")
     cfg.setdefault("unofficial_uid",             "")
     cfg.setdefault("unofficial_host",            "")
     cfg.setdefault("unofficial_devices",         [])
+    cfg.setdefault("unofficial_vehicles",        [])
     dirty = "unofficial_client_device_id" not in cfg
     cfg.setdefault("unofficial_client_device_id", uuid.uuid4().hex)
     # These live in memory only — never written to SD card
     cfg["access_token"] = ""
     cfg["expires_at"]   = 0
-    cfg["unofficial_access_token"] = ""
     if dirty:
         # Muss sofort persistiert werden: die Geräte-ID muss über Neustarts
         # stabil bleiben, sonst registriert sich jeder Neustart als neues
@@ -540,18 +543,46 @@ _unofficial_auth_payload: dict = {}
 _unofficial_auth_dirty:   bool = False
 
 
+_unofficial_session: dict = {"ok": False, "error": "", "since": 0}
+
+
+def _set_unofficial_session(ok: bool, error: str = "") -> None:
+    _unofficial_session["ok"] = ok
+    _unofficial_session["error"] = "" if ok else error
+    if not ok:
+        _unofficial_session["since"] = 0
+    elif not _unofficial_session["since"]:
+        _unofficial_session["since"] = int(time.time())
+
+
 def _update_unofficial_auth_status(plugin_cfg: dict, base_topic: str) -> None:
     global _unofficial_auth_dirty
-    token      = plugin_cfg.get("unofficial_access_token", "")
-    refresh    = plugin_cfg.get("unofficial_refresh_token", "")
     _unofficial_auth_payload.clear()
     _unofficial_auth_payload.update({
         "topic":         f"{base_topic}/gateway_unofficial",
         "state":         "running",
-        "authenticated": bool(token and refresh),
-        "expires_at":    0,
+        "enabled":       bool(plugin_cfg.get("unofficial_enabled")),
+        "authenticated": _unofficial_session["ok"],
+        "error":         _unofficial_session["error"],
+        "since":         _unofficial_session["since"],
+        # Die WebUI erkennt daran, dass die Meldung vom neu gestarteten Gateway
+        # stammt und nicht der retained Stand von vorher ist.
+        "ts":            int(time.time()),
     })
     _unofficial_auth_dirty = True
+
+
+def _store_unofficial_tokens(plugin_cfg: dict, tokens) -> None:
+    keys = {
+        "unofficial_access_token":  tokens.access_token,
+        "unofficial_refresh_token": tokens.refresh_token,
+        "unofficial_uuid":          tokens.uuid,
+        "unofficial_region":        tokens.region,
+    }
+    changed = any(plugin_cfg.get(k, "") != v for k, v in keys.items())
+    plugin_cfg.update(keys)
+    if changed:
+        save_plugin_config(plugin_cfg)
 
 # Startwert = jetzt, nicht 0.0: sonst sieht der Silence-Watchdog beim ersten
 # Durchlauf "seit 1970 keine Nachricht" und reconnectet eine frische, gesunde
@@ -1186,22 +1217,13 @@ async def task_unofficial_token_refresh(
             new_tokens = await navimow_unofficial_auth.refresh(session, unofficial_client.tokens)
         except Exception as e:
             LOGWARN(f"Unofficial token refresh failed: {e}")
-            plugin_cfg["unofficial_access_token"] = ""
+            _set_unofficial_session(False, str(e))
             _update_unofficial_auth_status(plugin_cfg, base_topic)
             delay = min(delay * 2, 55 * 60) if delay < 55 * 60 else 60
             continue
-        changed = (
-            plugin_cfg.get("unofficial_refresh_token") != new_tokens.refresh_token
-            or plugin_cfg.get("unofficial_uuid", "") != new_tokens.uuid
-            or plugin_cfg.get("unofficial_region", "") != new_tokens.region
-        )
         unofficial_client._tokens = new_tokens
-        plugin_cfg["unofficial_refresh_token"] = new_tokens.refresh_token
-        plugin_cfg["unofficial_access_token"]  = new_tokens.access_token
-        plugin_cfg["unofficial_uuid"]          = new_tokens.uuid
-        plugin_cfg["unofficial_region"]        = new_tokens.region
-        if changed:
-            save_plugin_config(plugin_cfg)
+        _store_unofficial_tokens(plugin_cfg, new_tokens)
+        _set_unofficial_session(True)
         _update_unofficial_auth_status(plugin_cfg, base_topic)
         LOGOK("Unofficial session refreshed")
         delay = 55 * 60
@@ -1364,32 +1386,24 @@ async def main() -> None:
                 import navimow_unofficial_auth
                 from navimow_unofficial_client import NavimowUnofficialClient
                 tokens = navimow_unofficial_auth.Tokens(
-                    access_token="",
+                    access_token=plugin_cfg.get("unofficial_access_token", ""),
                     refresh_token=plugin_cfg["unofficial_refresh_token"],
                     uuid=plugin_cfg.get("unofficial_uuid", ""),
                     region=plugin_cfg.get("unofficial_region", "fra"),
                 )
                 tokens = await navimow_unofficial_auth.refresh(session, tokens)
-                changed = (
-                    plugin_cfg.get("unofficial_refresh_token") != tokens.refresh_token
-                    or plugin_cfg.get("unofficial_uuid", "") != tokens.uuid
-                    or plugin_cfg.get("unofficial_region", "") != tokens.region
-                )
-                plugin_cfg["unofficial_access_token"] = tokens.access_token
-                plugin_cfg["unofficial_refresh_token"] = tokens.refresh_token
-                plugin_cfg["unofficial_uuid"] = tokens.uuid
-                plugin_cfg["unofficial_region"] = tokens.region
-                if changed:
-                    save_plugin_config(plugin_cfg)
+                _store_unofficial_tokens(plugin_cfg, tokens)
                 unofficial_client = NavimowUnofficialClient(
                     session, plugin_cfg["unofficial_client_device_id"],
                     tokens=tokens, uid=plugin_cfg.get("unofficial_uid", ""),
                     region=tokens.region or "fra",
                     host=plugin_cfg.get("unofficial_host") or "navimow-fra.ninebot.com",
                 )
+                _set_unofficial_session(True)
                 LOGOK("Unofficial API session established")
             except Exception as e:
                 LOGERR(f"Unofficial API session could not be established: {e}")
+                _set_unofficial_session(False, str(e))
                 unofficial_client = None
         _update_unofficial_auth_status(plugin_cfg, base_topic)
 
@@ -1493,7 +1507,10 @@ async def main() -> None:
                 await lbmqtt.publish(gw_topic, json.dumps({"state": "stopped"}), retain=True)
                 await lbmqtt.publish(
                     f"{base_topic}/gateway_unofficial",
-                    json.dumps({"state": "stopped", "authenticated": False, "expires_at": 0}),
+                    json.dumps({"state": "stopped",
+                                "enabled": bool(plugin_cfg.get("unofficial_enabled")),
+                                "authenticated": False, "error": "", "since": 0,
+                                "ts": int(time.time())}),
                     retain=True,
                 )
             LOGINF("Published gateway stopped state")
