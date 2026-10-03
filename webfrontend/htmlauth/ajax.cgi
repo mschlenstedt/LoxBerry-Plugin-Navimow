@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use CGI;
 use JSON;
+use IPC::Open2;
 use POSIX qw(setsid);
 use LoxBerry::System;
 use LoxBerry::IO;
@@ -26,6 +27,10 @@ if ($action eq 'getpid') {
     action_stop();
 } elsif ($action eq 'gettokenstatus') {
     action_gettokenstatus();
+} elsif ($action eq 'privatelogin') {
+    action_privatelogin();
+} elsif ($action eq 'getprivatestatus') {
+    action_getprivatestatus();
 } else {
     print encode_json({ error => "Unknown action: $action" });
 }
@@ -193,6 +198,66 @@ sub action_gettokenstatus {
         token       => $token,
         expires_in  => $expires_in+0,
         has_refresh => $has_refresh,
+    });
+}
+
+sub action_privatelogin {
+    my $email    = $cgi->param('email')    // '';
+    my $password = $cgi->param('password') // '';
+    unless ($email ne '' && $password ne '') {
+        print encode_json({ ok => 0, error => 'E-Mail und Passwort erforderlich' });
+        return;
+    }
+
+    my $plugin_folder = $lbpplugindir;
+    $plugin_folder =~ s{.*/plugins/}{};
+    my $helper = "$lbhomedir/bin/plugins/$plugin_folder/navimow_private_login.py";
+    unless (-f $helper) {
+        print encode_json({ ok => 0, error => "Login-Helfer nicht gefunden: $helper" });
+        return;
+    }
+
+    my $stdin_json = encode_json({ email => $email, password => $password });
+
+    my $pid = open2(my $out, my $in, 'python3', $helper, '--configdir', $lbpconfigdir);
+    print $in $stdin_json;
+    close $in;
+    my $result_line = <$out>;
+    close $out;
+    waitpid($pid, 0);
+
+    my $result = eval { decode_json($result_line // '') };
+    if (!$result) {
+        print encode_json({ ok => 0, error => 'Login-Helfer lieferte keine gueltige Antwort' });
+        return;
+    }
+    print encode_json($result);
+}
+
+sub action_getprivatestatus {
+    my $cfg = {};
+    if (-f $plugin_cfg) {
+        local $/;
+        if (open(my $fh, '<', $plugin_cfg)) {
+            eval { $cfg = decode_json(<$fh>); };
+        }
+    }
+    my $base_topic     = $cfg->{base_topic}          // 'navimow';
+    my $has_refresh    = ($cfg->{private_refresh_token} // '') ne '' ? 1 : 0;
+    my $devices_mapped = ref $cfg->{private_devices} eq 'ARRAY' ? scalar(@{$cfg->{private_devices}}) : 0;
+
+    my $raw = LoxBerry::IO::mqtt_get("$base_topic/gateway_private");
+    unless (defined $raw && $raw ne '') {
+        print encode_json({ ok => 0, has_refresh => $has_refresh,
+                             devices_mapped => $devices_mapped });
+        return;
+    }
+
+    my $data = eval { decode_json($raw) } // {};
+    print encode_json({
+        ok             => $data->{authenticated} ? 1 : 0,
+        has_refresh    => $has_refresh,
+        devices_mapped => $devices_mapped,
     });
 }
 

@@ -141,4 +141,66 @@ updateGatewayStatus();
 updateTokenStatus();
 setInterval(updateGatewayStatus, 5000);
 setInterval(updateTokenStatus,   5000);
+
+function updatePrivateStatus() {
+    fetch('ajax.cgi?action=getprivatestatus')
+        .then(r => r.json())
+        .then(data => {
+            const badge = document.getElementById('private_status_badge');
+            if (!badge) return;
+            if (data.ok) {
+                badge.textContent = window.L_PRIVATE_STATUS_CONNECTED || 'Verbunden';
+                badge.className = 'lb-badge lb-badge-success';
+            } else if (data.has_refresh) {
+                badge.textContent = window.L_PRIVATE_STATUS_NOT_CONNECTED || 'Nicht verbunden';
+                badge.className = 'lb-badge lb-badge-warning';
+            } else {
+                badge.textContent = window.L_PRIVATE_STATUS_NOT_CONNECTED || 'Nicht verbunden';
+                badge.className = 'lb-badge lb-badge-danger';
+            }
+        })
+        .catch(() => {});
+}
+
+function submitPrivateLogin() {
+    const email = document.getElementById('private_email').value.trim();
+    const password = document.getElementById('private_password').value;
+    const errorBox = document.getElementById('private_connect_error');
+    errorBox.style.display = 'none';
+
+    if (!email || !password) {
+        errorBox.textContent = 'E-Mail und Passwort erforderlich';
+        errorBox.style.display = 'block';
+        return;
+    }
+
+    const body = new URLSearchParams({ action: 'privatelogin', email: email, password: password });
+    fetch('ajax.cgi', { method: 'POST', body: body })
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('private_password').value = '';
+            if (data.ok) {
+                updatePrivateStatus();
+            } else {
+                errorBox.textContent = data.error || 'Login fehlgeschlagen';
+                errorBox.style.display = 'block';
+            }
+        })
+        .catch(() => {
+            errorBox.textContent = 'Netzwerkfehler beim Login';
+            errorBox.style.display = 'block';
+        });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const btn = document.getElementById('btn_private_connect');
+    if (btn) {
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            submitPrivateLogin();
+        });
+    }
+    updatePrivateStatus();
+    setInterval(updatePrivateStatus, 30000);
+});
 </script>
