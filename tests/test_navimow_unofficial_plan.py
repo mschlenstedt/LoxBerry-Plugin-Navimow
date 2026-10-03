@@ -30,6 +30,29 @@ def test_parse_zone_ids_rejects_garbage():
         plan.parse_zone_ids("1,vorne")
 
 
+def test_parse_zone_ids_rejects_invalid_range():
+    with pytest.raises(plan.PlanError) as err:
+        plan.parse_zone_ids("0")
+    assert "Ungültige Zonen-ID" in str(err.value) and "erlaubt 1 bis 65535" in str(err.value)
+    with pytest.raises(plan.PlanError) as err:
+        plan.parse_zone_ids("-3")
+    assert "erlaubt 1 bis 65535" in str(err.value)
+    with pytest.raises(plan.PlanError) as err:
+        plan.parse_zone_ids("65536")
+    assert "erlaubt 1 bis 65535" in str(err.value)
+
+
+def test_parse_zone_ids_rejects_duplicates():
+    with pytest.raises(plan.PlanError) as err:
+        plan.parse_zone_ids("1,1")
+    assert "Zone 1 ist doppelt angegeben" in str(err.value)
+
+
+def test_parse_zone_ids_accepts_boundary():
+    assert plan.parse_zone_ids("65535") == [65535]
+    assert plan.parse_zone_ids("1") == [1]
+
+
 def test_check_zones_names_unknown_and_known():
     with pytest.raises(plan.PlanError) as err:
         plan.check_zones([1, 9], [1, 2])
@@ -164,3 +187,9 @@ def test_parse_schedule_prefers_plan_v2_and_names_zones():
     assert out["tuesday"] == {"enabled": False, "periods": [], "text": "aus"}
     assert set(out) == set(plan.WEEKDAYS)
     assert plan.parse_schedule(None, {})["sunday"]["text"] == "aus"
+
+
+def test_parse_schedule_empty_v2_list_does_not_fall_back_to_plan():
+    set_list = {"workPlanV2": [], "plan": [{"day": 2, "open": 1, "period": [[36, 48]]}]}
+    out = plan.parse_schedule(set_list, {})
+    assert out["monday"]["enabled"] is False

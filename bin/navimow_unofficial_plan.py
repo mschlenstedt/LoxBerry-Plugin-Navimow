@@ -67,6 +67,7 @@ def parse_zone_ids(value: Any) -> list[int]:
         return []
     items = value if isinstance(value, (list, tuple)) else str(value).replace(";", ",").split(",")
     out: list[int] = []
+    seen: set[int] = set()
     for item in items:
         text = str(item).strip()
         if not text:
@@ -74,6 +75,11 @@ def parse_zone_ids(value: Any) -> list[int]:
         number = _as_int(text)
         if number is None:
             raise PlanError(f"Ungültige Zonen-ID: {text!r}")
+        if not 1 <= number <= 65535:
+            raise PlanError(f"Ungültige Zonen-ID: {text!r} (erlaubt 1 bis 65535)")
+        if number in seen:
+            raise PlanError(f"Zone {number} ist doppelt angegeben")
+        seen.add(number)
         out.append(number)
     return out
 
@@ -256,7 +262,11 @@ def _schedule_source(set_list: Any) -> Any:
     """Der gültige Plan steht in workPlanV2/plan_v2; das alte Feld plan bleibt eingefroren."""
     if not isinstance(set_list, dict):
         return None
-    return set_list.get("plan_v2") or set_list.get("workPlanV2") or set_list.get("plan")
+    if "plan_v2" in set_list and set_list["plan_v2"] is not None:
+        return set_list["plan_v2"]
+    if "workPlanV2" in set_list and set_list["workPlanV2"] is not None:
+        return set_list["workPlanV2"]
+    return set_list.get("plan")
 
 
 def parse_schedule(set_list: Any, zone_names: dict) -> dict:
