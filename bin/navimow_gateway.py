@@ -1026,7 +1026,7 @@ async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason
 
 
 # ── Task 8: LoxBerry MQTT → Navimow commands ─────────────────────────────────
-_UNOFFICIAL_COMMANDS = {"pause", "dock", "resume"}
+_UNOFFICIAL_COMMANDS = {"pause", "dock", "resume", "mow", "schedule"}
 # Starke Referenzen auf laufende Tasks inoffizieller Befehle (sonst GC-gefährdet).
 _unofficial_tasks: set = set()
 
@@ -1094,9 +1094,14 @@ async def task_mqtt_to_navimow(
                 await asyncio.sleep(10)
 
 
+def _unofficial_error_text(err: Exception) -> str:
+    if str(getattr(err, "code", "")) == "5001":
+        return "Der Mäher lehnt das ab, solange er mäht (5001). Erst pausieren oder andocken."
+    return str(err)
+
+
 async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plugin_cfg, unofficial_client) -> None:
-    """Phase 1: nur pause/dock/resume. Spätere Phasen erweitern _UNOFFICIAL_COMMANDS
-    und diese Funktion um mow/schedule/setting, ohne den Dispatch-Aufbau zu ändern."""
+    """Befehle der inoffiziellen API: pause, dock, resume, mow, schedule."""
     try:
         payload = json.loads(message.payload.decode("utf-8", errors="replace"))
         cmd = str(payload.get("cmd", "")).strip().lower()
@@ -1132,14 +1137,27 @@ async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plu
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
                                        "no vehicle_sn mapping for this device", source="unofficial")
         return
+    vehicle_type = int(mapping.get("vehicle_type") or 0)
+    known = _unofficial_known_zone_ids(device_id)
     try:
-        method = getattr(unofficial_client, cmd)
-        await method(sn)
+        if cmd == "mow":
+            ids_hex, setup = navimow_unofficial_plan.build_mow(payload, known)
+            await unofficial_client.mow_zones(sn, ids_hex, setup)
+        elif cmd == "schedule":
+            day, enabled, periods = navimow_unofficial_plan.build_schedule(payload, known)
+            await unofficial_client.set_day_schedule(sn, vehicle_type, day, enabled, periods)
+            _unofficial_refresh.set()
+        else:
+            await getattr(unofficial_client, cmd)(sn)
         LOGOK(f"unofficial {cmd}({device_id})")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True, "ok", source="unofficial")
+    except navimow_unofficial_plan.PlanError as e:
+        LOGWARN(f"unofficial {cmd}({device_id}) refused: {e}")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, str(e), source="unofficial")
     except Exception as e:
         LOGERR(f"unofficial {cmd}({device_id}) failed: {e}")
-        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, str(e), source="unofficial")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
+                                       _unofficial_error_text(e), source="unofficial")
 
 
 # ── Task 9: Token Refresh ─────────────────────────────────────────────────────
