@@ -536,6 +536,23 @@ def _update_auth_status(plugin_cfg: dict, base_topic: str) -> None:
     })
     _auth_dirty = True
 
+_private_auth_payload: dict = {}
+_private_auth_dirty:   bool = False
+
+
+def _update_private_auth_status(plugin_cfg: dict, base_topic: str) -> None:
+    global _private_auth_dirty
+    token      = plugin_cfg.get("private_access_token", "")
+    refresh    = plugin_cfg.get("private_refresh_token", "")
+    _private_auth_payload.clear()
+    _private_auth_payload.update({
+        "topic":         f"{base_topic}/gateway_private",
+        "state":         "running",
+        "authenticated": bool(token and refresh),
+        "expires_at":    0,
+    })
+    _private_auth_dirty = True
+
 # Startwert = jetzt, nicht 0.0: sonst sieht der Silence-Watchdog beim ersten
 # Durchlauf "seit 1970 keine Nachricht" und reconnectet eine frische, gesunde
 # Verbindung sofort wieder weg. Wird zusätzlich bei jedem Connect zurückgesetzt.
@@ -928,15 +945,24 @@ async def task_navimow_to_mqtt(
                         await lbmqtt.publish(topic, json.dumps(payload), retain=True)
                         LOGDEB(f"Published auth status: authenticated={payload.get('authenticated')}")
 
+                    global _private_auth_dirty
+                    if _private_auth_dirty and _private_auth_payload:
+                        _private_auth_dirty = False
+                        topic = _private_auth_payload["topic"]
+                        payload = {k: v for k, v in _private_auth_payload.items() if k != "topic"}
+                        await lbmqtt.publish(topic, json.dumps(payload), retain=True)
+                        LOGDEB(f"Published private auth status: authenticated={payload.get('authenticated')}")
+
         except Exception as e:
             if not shutdown.is_set():
                 LOGERR(f"LoxBerry MQTT error: {e} — reconnecting in 10s")
                 await asyncio.sleep(10)
 
 
-async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason="none"):
+async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason="none", source="official"):
     payload = json.dumps({
         "command":    cmd,
+        "source":     source,
         "result":     "ok" if ok else "error",
         "result_num": 0 if ok else 1,
         "reason":     reason,
@@ -949,11 +975,15 @@ async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason
 
 
 # ── Task 8: LoxBerry MQTT → Navimow commands ─────────────────────────────────
+_PRIVATE_COMMANDS = {"pause", "dock", "resume"}
+
+
 async def task_mqtt_to_navimow(
     session: aiohttp.ClientSession,
     plugin_cfg: dict,
     base_topic: str,
     broker: dict,
+    private_client,   # NavimowPrivateClient | None
     shutdown: asyncio.Event,
 ) -> None:
     mqtt_kwargs = _build_mqtt_kwargs(broker)
@@ -961,14 +991,24 @@ async def task_mqtt_to_navimow(
         try:
             async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
                 await lbmqtt.subscribe(f"{base_topic}/+/set")
-                LOGINF(f"Subscribed to {base_topic}/+/set")
+                await lbmqtt.subscribe(f"{base_topic}/+/set_private")
+                LOGINF(f"Subscribed to {base_topic}/+/set and {base_topic}/+/set_private")
                 async for message in lbmqtt.messages:
                     if shutdown.is_set():
                         break
-                    parts = str(message.topic).split("/")
+                    topic_str = str(message.topic)
+                    parts = topic_str.split("/")
                     if len(parts) < 3:
                         continue
                     device_id = parts[-2]
+
+                    if topic_str.endswith("/set_private"):
+                        await _handle_private_command(
+                            lbmqtt, message, device_id, base_topic,
+                            plugin_cfg, private_client,
+                        )
+                        continue
+
                     cmd = message.payload.decode("utf-8", errors="replace").strip().lower()
                     token = plugin_cfg.get("access_token", "")
                     if not token:
@@ -984,11 +1024,52 @@ async def task_mqtt_to_navimow(
                     else:
                         LOGERR(f"{canonical}({device_id}) failed: {reason}")
                     await _publish_command_result(lbmqtt, base_topic, device_id,
-                                                  canonical, ok, reason)
+                                                  canonical, ok, reason, source="official")
         except Exception as e:
             if not shutdown.is_set():
                 LOGERR(f"Command MQTT error: {e} — reconnecting in 10s")
                 await asyncio.sleep(10)
+
+
+async def _handle_private_command(lbmqtt, message, device_id, base_topic, plugin_cfg, private_client) -> None:
+    """Phase 1: nur pause/dock/resume. Spaetere Phasen erweitern _PRIVATE_COMMANDS
+    und diese Funktion um mow/schedule/setting, ohne den Dispatch-Aufbau zu aendern."""
+    try:
+        payload = json.loads(message.payload.decode("utf-8", errors="replace"))
+        cmd = str(payload.get("cmd", "")).strip().lower()
+    except (json.JSONDecodeError, AttributeError):
+        LOGWARN(f"set_private: invalid JSON payload for {device_id}")
+        return
+
+    if private_client is None:
+        LOGWARN(f"set_private({cmd}) ignored — private API not configured")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
+                                       "private API not configured", source="private")
+        return
+
+    if cmd not in _PRIVATE_COMMANDS:
+        LOGWARN(f"set_private: unknown command {cmd}")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
+                                       f"unknown command: {cmd}", source="private")
+        return
+
+    device_map = {d["device_id"]: d for d in plugin_cfg.get("private_devices", [])}
+    mapping = device_map.get(device_id)
+    if not mapping:
+        LOGWARN(f"set_private({cmd}): no vehicle_sn mapping for {device_id}")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
+                                       "no vehicle_sn mapping for this device", source="private")
+        return
+
+    sn = mapping["vehicle_sn"]
+    try:
+        method = getattr(private_client, cmd)
+        await method(sn)
+        LOGOK(f"private {cmd}({device_id})")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True, "ok", source="private")
+    except Exception as e:
+        LOGERR(f"private {cmd}({device_id}) failed: {e}")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, str(e), source="private")
 
 
 # ── Task 9: Token Refresh ─────────────────────────────────────────────────────
@@ -1059,6 +1140,40 @@ async def task_token_refresh(
                 await asyncio.sleep(2)
                 cloud_mqtt.connect(asyncio.get_event_loop())
             _update_auth_status(plugin_cfg, base_topic)
+
+
+async def task_private_token_refresh(
+    plugin_cfg: dict,
+    session: aiohttp.ClientSession,
+    private_client,   # NavimowPrivateClient | None
+    base_topic: str,
+    shutdown: asyncio.Event,
+) -> None:
+    """Haelt die private Passport-Session am Leben (Refresh alle ~55 Minuten).
+
+    Analog zu task_token_refresh, aber ohne Reconnect-Zwang: die private API
+    hat -- anders als die offizielle Cloud-MQTT -- keinen langlebigen
+    WebSocket, jeder Call baut die Verbindung frisch auf.
+    """
+    if private_client is None:
+        return
+    while not shutdown.is_set():
+        await asyncio.sleep(60)
+        if shutdown.is_set():
+            break
+        try:
+            import navimow_private_auth
+            new_tokens = await navimow_private_auth.refresh(session, private_client.tokens)
+        except Exception as e:
+            LOGWARN(f"Private token refresh failed (retrying next cycle): {e}")
+            continue
+        private_client._tokens = new_tokens
+        plugin_cfg["private_refresh_token"] = new_tokens.refresh_token
+        plugin_cfg["private_access_token"]  = new_tokens.access_token
+        save_plugin_config(plugin_cfg)
+        _update_private_auth_status(plugin_cfg, base_topic)
+        LOGOK("Private session refreshed")
+        await asyncio.sleep(55 * 60)
 
 
 # ── Task 10: REST Poll ────────────────────────────────────────────────────────
@@ -1212,6 +1327,32 @@ async def main() -> None:
             await _do_token_refresh(plugin_cfg, session)
         _update_auth_status(plugin_cfg, base_topic)
 
+        private_client = None
+        if plugin_cfg.get("private_enabled") and plugin_cfg.get("private_refresh_token"):
+            try:
+                import navimow_private_auth
+                from navimow_private_client import NavimowPrivateClient
+                tokens = navimow_private_auth.Tokens(
+                    access_token="",
+                    refresh_token=plugin_cfg["private_refresh_token"],
+                    uuid=plugin_cfg.get("private_uuid", ""),
+                    region=plugin_cfg.get("private_region", "fra"),
+                )
+                tokens = await navimow_private_auth.refresh(session, tokens)
+                plugin_cfg["private_access_token"] = tokens.access_token
+                plugin_cfg["private_refresh_token"] = tokens.refresh_token
+                private_client = NavimowPrivateClient(
+                    session, plugin_cfg["private_client_device_id"],
+                    tokens=tokens, uid=plugin_cfg.get("private_uid", ""),
+                    region=tokens.region or "fra",
+                    host=plugin_cfg.get("private_host") or "navimow-fra.ninebot.com",
+                )
+                LOGOK("Private API session established")
+            except Exception as e:
+                LOGERR(f"Private API session could not be established: {e}")
+                private_client = None
+        _update_private_auth_status(plugin_cfg, base_topic)
+
         mqtt_info = await rest_init(plugin_cfg, session)
 
         # Publish static mower info (model, firmware) — retain=True, persists across restarts
@@ -1274,10 +1415,15 @@ async def main() -> None:
                 task_navimow_to_mqtt(base_topic, broker, _shutdown_event)
             ),
             asyncio.create_task(
-                task_mqtt_to_navimow(session, plugin_cfg, base_topic, broker, _shutdown_event)
+                task_mqtt_to_navimow(session, plugin_cfg, base_topic, broker,
+                                      private_client, _shutdown_event)
             ),
             asyncio.create_task(
                 task_token_refresh(plugin_cfg, session, cloud_mqtt, base_topic, _shutdown_event)
+            ),
+            asyncio.create_task(
+                task_private_token_refresh(plugin_cfg, session, private_client,
+                                            base_topic, _shutdown_event)
             ),
             asyncio.create_task(
                 task_rest_poll(session, plugin_cfg, _shutdown_event)
