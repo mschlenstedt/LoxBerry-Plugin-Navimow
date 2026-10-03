@@ -1003,10 +1003,13 @@ async def task_mqtt_to_navimow(
                     device_id = parts[-2]
 
                     if topic_str.endswith("/set_private"):
-                        await _handle_private_command(
-                            lbmqtt, message, device_id, base_topic,
-                            plugin_cfg, private_client,
-                        )
+                        try:
+                            await _handle_private_command(
+                                lbmqtt, message, device_id, base_topic,
+                                plugin_cfg, private_client,
+                            )
+                        except Exception as e:
+                            LOGERR(f"Private command error: {e}")
                         continue
 
                     cmd = message.payload.decode("utf-8", errors="replace").strip().lower()
@@ -1053,7 +1056,7 @@ async def _handle_private_command(lbmqtt, message, device_id, base_topic, plugin
                                        f"unknown command: {cmd}", source="private")
         return
 
-    device_map = {d["device_id"]: d for d in plugin_cfg.get("private_devices", [])}
+    device_map = {d.get("device_id"): d for d in plugin_cfg.get("private_devices", []) if d.get("device_id")}
     mapping = device_map.get(device_id)
     if not mapping:
         LOGWARN(f"set_private({cmd}): no vehicle_sn mapping for {device_id}")
@@ -1061,7 +1064,12 @@ async def _handle_private_command(lbmqtt, message, device_id, base_topic, plugin
                                        "no vehicle_sn mapping for this device", source="private")
         return
 
-    sn = mapping["vehicle_sn"]
+    sn = mapping.get("vehicle_sn", "")
+    if not sn:
+        LOGWARN(f"set_private({cmd}): no vehicle_sn value for {device_id}")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
+                                       "no vehicle_sn mapping for this device", source="private")
+        return
     try:
         method = getattr(private_client, cmd)
         await method(sn)
@@ -1157,15 +1165,19 @@ async def task_private_token_refresh(
     """
     if private_client is None:
         return
+    delay = 55 * 60  # Start after initial refresh done in main()
     while not shutdown.is_set():
-        await asyncio.sleep(60)
+        await asyncio.sleep(delay)
         if shutdown.is_set():
             break
         try:
             import navimow_private_auth
             new_tokens = await navimow_private_auth.refresh(session, private_client.tokens)
         except Exception as e:
-            LOGWARN(f"Private token refresh failed (retrying next cycle): {e}")
+            LOGWARN(f"Private token refresh failed: {e}")
+            plugin_cfg["private_access_token"] = ""
+            _update_private_auth_status(plugin_cfg, base_topic)
+            delay = min(delay * 2, 55 * 60) if delay < 55 * 60 else 60
             continue
         private_client._tokens = new_tokens
         plugin_cfg["private_refresh_token"] = new_tokens.refresh_token
@@ -1173,7 +1185,7 @@ async def task_private_token_refresh(
         save_plugin_config(plugin_cfg)
         _update_private_auth_status(plugin_cfg, base_topic)
         LOGOK("Private session refreshed")
-        await asyncio.sleep(55 * 60)
+        delay = 55 * 60
 
 
 # ── Task 10: REST Poll ────────────────────────────────────────────────────────
@@ -1341,6 +1353,7 @@ async def main() -> None:
                 tokens = await navimow_private_auth.refresh(session, tokens)
                 plugin_cfg["private_access_token"] = tokens.access_token
                 plugin_cfg["private_refresh_token"] = tokens.refresh_token
+                save_plugin_config(plugin_cfg)
                 private_client = NavimowPrivateClient(
                     session, plugin_cfg["private_client_device_id"],
                     tokens=tokens, uid=plugin_cfg.get("private_uid", ""),
