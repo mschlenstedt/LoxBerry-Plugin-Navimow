@@ -328,6 +328,13 @@ sub action_getunofficialstatus {
     my $raw  = LoxBerry::IO::mqtt_get("$base_topic/gateway_unofficial");
     my $data = (defined $raw && $raw ne '') ? (eval { decode_json($raw) } // {}) : {};
 
+    my $zones_text = '';
+    if (@mapping && $mapping[0]->{device_id}) {
+        my $zraw = LoxBerry::IO::mqtt_get("$base_topic/$mapping[0]->{device_id}/zones");
+        my $zdata = (defined $zraw && $zraw ne '') ? (eval { decode_json($zraw) } // {}) : {};
+        $zones_text = $zdata->{text} // '';
+    }
+
     print encode_json({
         enabled    => $cfg->{unofficial_enabled} ? 1 : 0,
         ok         => $data->{authenticated} ? 1 : 0,
@@ -339,6 +346,7 @@ sub action_getunofficialstatus {
         mapping    => [ map { { device_id => $_->{device_id}, vehicle_sn => $_->{vehicle_sn} } } @mapping ],
         vehicles   => [ map { { vehicle_sn => $_->{vehicle_sn}, name => $_->{name} // '' } } @vehicles ],
         devices    => [ map { { device_id => $_->{device_id}, name => $_->{name} // '' } } @devices ],
+        zones_text => $zones_text,
     });
 }
 

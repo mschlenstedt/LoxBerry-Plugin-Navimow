@@ -49,12 +49,26 @@
       <td>command, source (official|unofficial), result, result_num, reason</td>
     </tr>
     <tr>
-      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set_unofficial</td>
+      <td style=”font-family:monospace;white-space:nowrap;”><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set_unofficial</td>
       <td>IN</td><td>&mdash;</td>
-      <td>JSON: {"cmd":"pause"} &nbsp;|&nbsp; {"cmd":"dock"} &nbsp;|&nbsp; {"cmd":"resume"} &mdash; nur mit Anmeldung unter „Erweiterte Befehle“</td>
+      <td>JSON, nur mit Anmeldung unter „Erweiterte Befehle”:<br>
+        {“cmd”:”pause”} &nbsp;|&nbsp; {“cmd”:”dock”} &nbsp;|&nbsp; {“cmd”:”resume”}<br>
+        {“cmd”:”mow”} &mdash; alle Zonen, der Mäher wählt die Route<br>
+        {“cmd”:”mow”,”zones”:”2,1”,”reset”:false} &mdash; Zonen in dieser Reihenfolge, Restfläche fortsetzen<br>
+        {“cmd”:”schedule”,”day”:”montag”,”enabled”:true,”periods”:[{“start”:”09:00”,”end”:”12:00”,”zones”:”1”}]} &mdash; Zeiten im 15-Minuten-Raster, ohne zones alle Zonen</td>
     </tr>
     <tr>
-      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/gateway_unofficial</td>
+      <td style=”font-family:monospace;white-space:nowrap;”><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/zones</td>
+      <td>OUT</td><td>&#10003;</td>
+      <td>count, ids, text, list (id, name, area), ts &mdash; nur mit inoffizieller Anmeldung</td>
+    </tr>
+    <tr>
+      <td style=”font-family:monospace;white-space:nowrap;”><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/schedule</td>
+      <td>OUT</td><td>&#10003;</td>
+      <td>sunday … saturday mit enabled, text, periods (start, end, zones), ts &mdash; nur mit inoffizieller Anmeldung</td>
+    </tr>
+    <tr>
+      <td style=”font-family:monospace;white-space:nowrap;”><TMPL_VAR BASE_TOPIC>/gateway_unofficial</td>
       <td>OUT</td><td>&#10003;</td>
       <td>state, enabled, authenticated, error, since, ts</td>
     </tr>

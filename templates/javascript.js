@@ -79,6 +79,8 @@ const L = {
     LBL_SINCE:       '<TMPL_VAR "UNOFFICIAL.LABEL_SINCE" ESCAPE=JS>',
     LBL_TOPIC:       '<TMPL_VAR "UNOFFICIAL.LABEL_TOPIC" ESCAPE=JS>',
     LBL_MOWER:       '<TMPL_VAR "UNOFFICIAL.LABEL_MOWER" ESCAPE=JS>',
+    LBL_ZONES:       '<TMPL_VAR "UNOFFICIAL.LABEL_ZONES" ESCAPE=JS>',
+    ZONES_NONE:      '<TMPL_VAR "UNOFFICIAL.ZONES_NONE" ESCAPE=JS>',
     MAP_HINT:        '<TMPL_VAR "UNOFFICIAL.MAP_HINT" ESCAPE=JS>',
     MAP_LABEL:       '<TMPL_VAR "UNOFFICIAL.MAP_LABEL" ESCAPE=JS>',
     MAP_CHOOSE:      '<TMPL_VAR "UNOFFICIAL.MAP_CHOOSE" ESCAPE=JS>',
@@ -195,7 +197,7 @@ function btn(act, label, cls, opts) {
 function unofficialSignature(view) {
     const u = S.un || {};
     return [view, S.busy, S.steps.join(), S.err, S.notice, S.fieldErr, S.confirmLogout, S.flow, S.map,
-            u.error, u.since, JSON.stringify(u.mapping || []), JSON.stringify(u.vehicles || []), (S.un ? S.un.base_topic : '')].join('|');
+            u.error, u.since, JSON.stringify(u.mapping || []), JSON.stringify(u.vehicles || []), u.zones_text, (S.un ? S.un.base_topic : '')].join('|');
 }
 let lastSig = '';
 
@@ -233,6 +235,7 @@ function renderUnofficial() {
         const dev = (u.mapping && u.mapping[0] && u.mapping[0].device_id) || '&lt;device_id&gt;';
         html = notice + '<div class="nm-note ok"><b class="nm-ico">✓</b><span>' + esc(L.OK_CONNECTED) + '</span></div>' +
             '<dl class="nm-kv"><dt>' + esc(L.LBL_SINCE) + '</dt><dd>' + esc(fmtSince(u.since)) + '</dd>' +
+            '<dt>' + esc(L.LBL_ZONES) + '</dt><dd>' + esc(u.zones_text || L.ZONES_NONE) + '</dd>' +
             '<dt>' + esc(L.LBL_TOPIC) + '</dt><dd class="nm-mono">' + esc(base) + '/' + (dev === '&lt;device_id&gt;' ? dev : esc(dev)) + '/set_unofficial</dd></dl>';
         actions = S.confirmLogout
             ? '<span class="nm-desc">' + esc(L.CONFIRM_LOGOUT) + '</span>' + btn('logout-cancel', L.BTN_CANCEL) + btn('logout-confirm', L.BTN_LOGOUT_OK, 'lb-btn-danger')
