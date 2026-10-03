@@ -17,6 +17,7 @@ from typing import Any
 import aiohttp
 
 import navimow_unofficial_crypto as crypto
+import navimow_unofficial_plan as plan
 from navimow_unofficial_auth import Tokens
 
 _HEADERS = {
@@ -195,3 +196,46 @@ class NavimowUnofficialClient:
 
     async def resume(self, sn: str) -> dict:
         return await self._behavior(sn, 3)
+
+    async def location(self, sn: str, vehicle_type: int) -> dict:
+        return await self.call("/vehicle/vehicle/get-location",
+                               {"vehicle_sn": sn, "vehicle_type": vehicle_type}) or {}
+
+    async def map_list(self, sn: str) -> Any:
+        return await self.call("/map/index/map-list", {"vehicle_sn": sn})
+
+    async def map_detail(self, sn: str, map_id: str, map_base_id: str) -> Any:
+        """Unkomprimierte Kartendaten: map_detail ist ein JSON-String, kein zstd nötig."""
+        return await self.call("/map/index/map-detail",
+                               {"vehicle_sn": sn, "map_id": map_id, "map_base_id": map_base_id})
+
+    async def set_list(self, sn: str) -> dict:
+        return await self.call("/vehicle/vehicle/set-list", {"vehicle_sn": sn}) or {}
+
+    async def mow_zones(self, sn: str, partition_ids_hex: str, partition_setup: int) -> Any:
+        return await self.call(
+            "/vehicle/set/send",
+            {"vehicle_sn": sn, "cmdCode": "s:mower",
+             "data": {"partitionSetup": partition_setup, "partitionIds": partition_ids_hex}},
+        )
+
+    async def set_day_schedule(self, sn: str, vehicle_type: int, day: int, enabled: bool,
+                               periods: list[dict]) -> Any:
+        """Einen Wochentag schreiben, wie die App: erst an den Mäher, dann die Cloud-Kopie.
+
+        Mäht der Mäher gerade, lehnt er den Gerätebefehl ab (5001); dann wird die
+        Cloud-Kopie gar nicht erst geschrieben, sonst zeigt die App einen Plan,
+        den der Mäher nicht hat.
+        """
+        key = f"partitionPlan{int(day) - 1}"
+        await self.call(
+            "/vehicle/set/send",
+            {"vehicle_sn": sn, "cmdCode": "s:mower",
+             "data": json.dumps({key: plan.partition_plan_hex(day, enabled, periods)}, separators=(",", ":"))},
+        )
+        return await self.call(
+            "/vehicle/set/save-set-data",
+            {"vehicle_sn": sn, "vehicle_type": str(vehicle_type),
+             "data": {key: {"day": int(day), "open": 1 if enabled else 0, "period": periods}},
+             "operation_type": "iot_set"},
+        )
