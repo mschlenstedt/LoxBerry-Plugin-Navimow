@@ -51,11 +51,11 @@
     <tr>
       <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/set_unofficial</td>
       <td>IN</td><td>&mdash;</td>
-      <td>JSON, nur mit Anmeldung unter „Erweiterte Befehle”:<br>
+      <td>JSON, nur mit Anmeldung unter „Erweiterte Befehle“:<br>
         {"cmd":"pause"} &nbsp;|&nbsp; {"cmd":"dock"} &nbsp;|&nbsp; {"cmd":"resume"}<br>
-        {"cmd":"mow"} &mdash; alle Zonen, der Mäher wählt die Route<br>
+        {"cmd":"mow"} &mdash; alle Zonen, der Mäher wählt die Route, beginnt neu (bisheriger Fortschritt wird verworfen; mit "reset":false nur die Restfläche)<br>
         {"cmd":"mow","zones":"2,1","reset":false} &mdash; Zonen in dieser Reihenfolge, Restfläche fortsetzen<br>
-        {"cmd":"schedule","day":"montag","enabled":true,"periods":[{"start":"09:00","end":"12:00","zones":"1"}]} &mdash; Zeiten im 15-Minuten-Raster, ohne zones alle Zonen</td>
+        {"cmd":"schedule","day":"montag","enabled":true,"periods":[{"start":"09:00","end":"12:00","zones":"1"}]} &mdash; Zeiten im 15-Minuten-Raster, ohne zones alle Zonen; ohne periods bleiben die bisherigen Zeitfenster erhalten, Ende 24:00 = Mitternacht</td>
     </tr>
     <tr>
       <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/zones</td>

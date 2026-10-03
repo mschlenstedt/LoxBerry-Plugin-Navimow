@@ -233,9 +233,16 @@ class NavimowUnofficialClient:
             {"vehicle_sn": sn, "cmdCode": "s:mower",
              "data": json.dumps({key: plan.partition_plan_hex(day, enabled, periods)}, separators=(",", ":"))},
         )
-        return await self.call(
-            "/vehicle/set/save-set-data",
-            {"vehicle_sn": sn, "vehicle_type": str(vehicle_type),
-             "data": {key: {"day": int(day), "open": 1 if enabled else 0, "period": periods}},
-             "operation_type": "iot_set"},
-        )
+        try:
+            return await self.call(
+                "/vehicle/set/save-set-data",
+                {"vehicle_sn": sn, "vehicle_type": str(vehicle_type),
+                 "data": {key: {"day": int(day), "open": 1 if enabled else 0, "period": periods}},
+                 "operation_type": "iot_set"},
+            )
+        except NavimowError as err:
+            raise NavimowError(
+                err.code,
+                "Mäher hat den Plan übernommen, die Cloud-Kopie ist fehlgeschlagen – bitte erneut senden ("
+                + str(getattr(err, "desc", "") or err) + ")",
+            ) from err

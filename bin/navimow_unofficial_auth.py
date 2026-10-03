@@ -114,7 +114,7 @@ async def lookup_region(session: aiohttp.ClientSession, email: str,
         params = {"account": email, "device": DEVICE}
         try:
             j = await _request(session, host, "/v3/region", params, method="GET", timeout=15)
-        except (aiohttp.ClientError, asyncio.TimeoutError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             continue
         answered = True
         code = str(j.get("resultCode"))
@@ -178,7 +178,7 @@ async def refresh(session: aiohttp.ClientSession, tokens: Tokens,
     for host in passport_hosts(region or tokens.region):
         try:
             j = await _request(session, host, "/v3/user/refresh", params, method="POST")
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             unreachable = err
             continue
         code = str(j.get("resultCode"))

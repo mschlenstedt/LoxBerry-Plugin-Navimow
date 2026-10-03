@@ -1094,9 +1094,12 @@ async def task_mqtt_to_navimow(
                 await asyncio.sleep(10)
 
 
-def _unofficial_error_text(err: Exception) -> str:
-    if str(getattr(err, "code", "")) == "5001":
-        return "Der Mäher lehnt das ab, solange er mäht (5001). Erst pausieren oder andocken."
+def _unofficial_error_text(err: Exception, cmd: str = "") -> str:
+    code = str(getattr(err, "code", ""))
+    if code == "5001" and cmd in ("schedule", "mow"):
+        desc = getattr(err, "desc", "") or ""
+        return ("Der Mäher lehnt das ab, solange er mäht. Erst pausieren oder andocken. "
+                f"(5001: {desc})")
     return str(err)
 
 
@@ -1137,16 +1140,19 @@ async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plu
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
                                        "no vehicle_sn mapping for this device", source="unofficial")
         return
-    vehicle_type = int(mapping.get("vehicle_type") or 0)
-    known = _unofficial_known_zone_ids(device_id)
+    schedule_validated = False
     try:
+        vehicle_type = int(mapping.get("vehicle_type") or 0)
+        known = _unofficial_known_zone_ids(device_id)
         if cmd == "mow":
             ids_hex, setup = navimow_unofficial_plan.build_mow(payload, known)
             await unofficial_client.mow_zones(sn, ids_hex, setup)
         elif cmd == "schedule":
-            day, enabled, periods = navimow_unofficial_plan.build_schedule(payload, known)
+            weekday = navimow_unofficial_plan.WEEKDAYS[navimow_unofficial_plan.parse_day(payload.get("day")) - 1]
+            current_day = (_unofficial_schedule.get(device_id) or {}).get(weekday)
+            day, enabled, periods = navimow_unofficial_plan.build_schedule(payload, known, current_day)
+            schedule_validated = True
             await unofficial_client.set_day_schedule(sn, vehicle_type, day, enabled, periods)
-            _unofficial_refresh.set()
         else:
             await getattr(unofficial_client, cmd)(sn)
         LOGOK(f"unofficial {cmd}({device_id})")
@@ -1157,7 +1163,10 @@ async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plu
     except Exception as e:
         LOGERR(f"unofficial {cmd}({device_id}) failed: {e}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       _unofficial_error_text(e), source="unofficial")
+                                       _unofficial_error_text(e, cmd), source="unofficial")
+    finally:
+        if schedule_validated:
+            _unofficial_refresh.set()
 
 
 # ── Task 9: Token Refresh ─────────────────────────────────────────────────────
@@ -1270,6 +1279,8 @@ async def task_unofficial_token_refresh(
 _UNOFFICIAL_POLL_INTERVAL = 30 * 60  # Karte und Plan ändern sich selten; nach einem Schreibbefehl sofort.
 _unofficial_zone_cache: dict = {}    # device_id -> navimow_unofficial_plan.ZoneCache
 _unofficial_refresh: asyncio.Event = asyncio.Event()
+_unofficial_schedule: dict = {}      # device_id -> zuletzt gelesener Wochenplan (Ergebnis von fetch_schedule)
+_UNOFFICIAL_POLL_BACKOFF = 60        # nach einer Runde mit Lesefehler, verdoppelt bis _UNOFFICIAL_POLL_INTERVAL
 
 
 def _unofficial_known_zone_ids(device_id: str) -> list:
@@ -1283,25 +1294,33 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
     if unofficial_client is None:
         return
     import navimow_unofficial_snapshot as snapshot
+    wait = _UNOFFICIAL_POLL_INTERVAL
     while not shutdown.is_set():
+        # Vor dem Lesen leeren: ein währenddessen fertiger Schreibbefehl behält sein Signal.
+        _unofficial_refresh.clear()
+        failed = False
         for mapping in plugin_cfg.get("unofficial_devices", []):
             did, sn = mapping.get("device_id"), mapping.get("vehicle_sn")
             if not did or not sn:
                 continue
-            cache = _unofficial_zone_cache.setdefault(did, navimow_unofficial_plan.ZoneCache())
             try:
+                cache = _unofficial_zone_cache.setdefault(did, navimow_unofficial_plan.ZoneCache())
                 zones = await snapshot.fetch_zones(unofficial_client, sn, int(mapping.get("vehicle_type") or 0), cache)
                 schedule = await snapshot.fetch_schedule(unofficial_client, sn, zones)
+                now = int(time.time())
+                _queue_retained(f"{base_topic}/{did}/zones", {**navimow_unofficial_plan.zones_payload(zones), "ts": now})
+                _queue_retained(f"{base_topic}/{did}/schedule", {**schedule, "ts": now})
+                _unofficial_schedule[did] = schedule
+                LOGINF(f"Unofficial snapshot for {did}: {len(zones)} zone(s)")
             except Exception as e:
+                failed = True
                 LOGWARN(f"Unofficial poll for {did} failed: {e}")
-                continue
-            now = int(time.time())
-            _queue_retained(f"{base_topic}/{did}/zones", {**navimow_unofficial_plan.zones_payload(zones), "ts": now})
-            _queue_retained(f"{base_topic}/{did}/schedule", {**schedule, "ts": now})
-            LOGINF(f"Unofficial snapshot for {did}: {len(zones)} zone(s)")
-        _unofficial_refresh.clear()
+        if failed:
+            wait = _UNOFFICIAL_POLL_BACKOFF if wait >= _UNOFFICIAL_POLL_INTERVAL else min(wait * 2, _UNOFFICIAL_POLL_INTERVAL)
+        else:
+            wait = _UNOFFICIAL_POLL_INTERVAL
         try:
-            await asyncio.wait_for(_unofficial_refresh.wait(), timeout=_UNOFFICIAL_POLL_INTERVAL)
+            await asyncio.wait_for(_unofficial_refresh.wait(), timeout=wait)
         except asyncio.TimeoutError:
             pass
 

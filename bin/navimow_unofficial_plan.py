@@ -6,6 +6,7 @@ Reine Funktionen ohne I/O. Byte-Formate und Semantik aus ilguala/navimow_pro
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 # Navimow zählt die Wochentage ab Sonntag: 1 = Sonntag ... 7 = Samstag.
@@ -34,9 +35,10 @@ def _as_int(value: Any) -> int | None:
 
 def _as_float(value: Any) -> float | None:
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    return number if math.isfinite(number) else None
 
 
 def as_bool(value: Any, default: bool) -> bool:
@@ -188,11 +190,16 @@ def parse_day(value: Any) -> int:
     return WEEKDAYS.index(name) + 1
 
 
-def hhmm_to_slot(value: Any) -> int:
-    """'HH:MM' -> 15-Minuten-Slot. Zeiten außerhalb des Rasters würden sonst still abgerundet."""
+def hhmm_to_slot(value: Any, end: bool = False) -> int:
+    """'HH:MM' -> 15-Minuten-Slot. Zeiten außerhalb des Rasters würden sonst still abgerundet.
+
+    Als Ende gilt Mitternacht (24:00 oder 00:00) als Tagesende, Slot 96.
+    """
     parts = str(value or "").strip().split(":")
     hours = _as_int(parts[0]) if parts and parts[0] else None
     minutes = _as_int(parts[1]) if len(parts) > 1 else 0
+    if end and hours in (0, 24) and minutes == 0:
+        return 24 * 60 // SLOT_MINUTES
     if hours is None or minutes is None or not (0 <= hours <= 23 and 0 <= minutes <= 59):
         raise PlanError(f"Ungültige Uhrzeit {value!r} (Format HH:MM)")
     if minutes % SLOT_MINUTES:
@@ -208,11 +215,22 @@ def slot_to_hhmm(slot: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
-def build_schedule(payload: dict, known_ids: list[int]) -> tuple[int, bool, list[dict]]:
-    """(Tag 1-7, an/aus, Perioden in Slots) für {"cmd": "schedule", "day", "enabled", "periods"}."""
+def build_schedule(payload: dict, known_ids: list[int],
+                   current_day: dict | None = None) -> tuple[int, bool, list[dict]]:
+    """(Tag 1-7, an/aus, Perioden in Slots) für {"cmd": "schedule", "day", "enabled", "periods"}.
+
+    Fehlt "periods", bleiben die Zeitfenster aus current_day (Eintrag dieses Wochentags aus
+    parse_schedule) erhalten; ein ausdrücklich leeres "periods": [] löscht sie.
+    """
     day = parse_day(payload.get("day"))
     enabled = as_bool(payload.get("enabled"), True)
-    raw = payload.get("periods") or []
+    if "periods" in payload:
+        raw = payload.get("periods") or []
+    elif current_day is None:
+        raise PlanError("Der aktuelle Plan ist noch nicht gelesen. Bitte periods mitschicken.")
+    else:
+        raw = [{"start": p["start"], "end": p["end"], "zones": p.get("zones") or []}
+               for p in current_day.get("periods") or []]
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
@@ -224,16 +242,21 @@ def build_schedule(payload: dict, known_ids: list[int]) -> tuple[int, bool, list
     for item in raw:
         if not isinstance(item, dict):
             raise PlanError("Jedes Zeitfenster braucht start und end")
-        start, end = hhmm_to_slot(item.get("start")), hhmm_to_slot(item.get("end"))
+        start, end = hhmm_to_slot(item.get("start")), hhmm_to_slot(item.get("end"), end=True)
         if end <= start:
             raise PlanError(
                 f"Zeitfenster {slot_to_hhmm(start)}–{slot_to_hhmm(end)}: das Ende muss nach dem Beginn liegen"
             )
         zones = parse_zone_ids(item.get("zones"))
+        if zones and not known_ids:
+            raise PlanError(
+                "Die Karte ist noch nicht gelesen – Zeitfenster mit Zonen sind erst danach möglich. "
+                "Ohne zones gilt das Fenster für alle Zonen."
+            )
         check_zones(zones, known_ids)
         periods.append({"start_time": start, "end_time": end, "partition_ids": zones})
     periods.sort(key=lambda p: p["start_time"])
-    for first, second in zip(periods, periods[1:]):
+    for first, second in zip(periods, periods[1:]) if enabled else ():
         if second["start_time"] < first["end_time"]:
             raise PlanError(
                 f"Zeitfenster überlappen: {slot_to_hhmm(first['start_time'])}–{slot_to_hhmm(first['end_time'])} "
@@ -288,6 +311,8 @@ def parse_schedule(set_list: Any, zone_names: dict) -> dict:
                 continue
             if start is None or end is None:
                 continue
+            if not isinstance(raw_ids, (list, tuple)):
+                raw_ids = []
             ids = [z for z in (_as_int(x) for x in raw_ids) if z is not None]
             periods.append({"start": slot_to_hhmm(start), "end": slot_to_hhmm(end), "zones": ids})
         try:

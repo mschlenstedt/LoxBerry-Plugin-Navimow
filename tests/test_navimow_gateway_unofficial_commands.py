@@ -31,6 +31,11 @@ class FakeClient:
             raise self.fail
         self.calls.append(("schedule", sn, vt, day, enabled, periods))
 
+    async def dock(self, sn):
+        if self.fail:
+            raise self.fail
+        self.calls.append(("dock", sn))
+
 
 def _msg(payload):
     return SimpleNamespace(payload=json.dumps(payload).encode())
@@ -76,3 +81,92 @@ async def test_schedule_refused_while_mowing_explains():
     payload = {"cmd": "schedule", "day": "monday", "periods": []}
     await gw._handle_unofficial_command(mqtt, _msg(payload), "D1", "navimow", CFG, client)
     assert "mäht" in mqtt.results[-1]["reason"]
+
+
+async def test_dock_calls_client_and_reports_ok():
+    mqtt, client = FakeMqtt(), FakeClient()
+    await gw._handle_unofficial_command(mqtt, _msg({"cmd": "dock"}), "D1", "navimow", CFG, client)
+    assert client.calls == [("dock", "SN1")]
+    assert mqtt.results[-1]["result"] == "ok"
+
+
+async def test_5001_explanation_only_for_mow_and_schedule():
+    for cmd, expect in (("mow", True), ("dock", False)):
+        _known(1)
+        mqtt, client = FakeMqtt(), FakeClient(fail=NavimowError(5001, "running"))
+        client.mow_zones = lambda *a, _c=client: (_ for _ in ()).throw(_c.fail)
+        await gw._handle_unofficial_command(mqtt, _msg({"cmd": cmd}), "D1", "navimow", CFG, client)
+        reason = mqtt.results[-1]["reason"]
+        assert ("mäht" in reason) is expect
+        assert "5001" in reason
+
+
+async def test_schedule_without_periods_sends_remembered_windows():
+    _known(1)
+    gw._unofficial_schedule["D1"] = {"monday": {"enabled": True, "text": "x", "periods": [
+        {"start": "09:00", "end": "12:00", "zones": [1]}]}}
+    mqtt, client = FakeMqtt(), FakeClient()
+    await gw._handle_unofficial_command(
+        mqtt, _msg({"cmd": "schedule", "day": "montag", "enabled": False}), "D1", "navimow", CFG, client)
+    assert client.calls == [("schedule", "SN1", 160000001, 2, False,
+                             [{"start_time": 36, "end_time": 48, "partition_ids": [1]}])]
+
+
+async def test_schedule_without_periods_and_no_plan_read_is_refused():
+    _known(1)
+    gw._unofficial_schedule.pop("D1", None)
+    mqtt, client = FakeMqtt(), FakeClient()
+    await gw._handle_unofficial_command(
+        mqtt, _msg({"cmd": "schedule", "day": "montag", "enabled": False}), "D1", "navimow", CFG, client)
+    assert client.calls == [] and "noch nicht gelesen" in mqtt.results[-1]["reason"]
+
+
+async def test_schedule_failure_still_triggers_refresh():
+    _known(1)
+    gw._unofficial_refresh.clear()
+    mqtt, client = FakeMqtt(), FakeClient(fail=NavimowError(9999, "Cloud-Kopie"))
+    await gw._handle_unofficial_command(
+        mqtt, _msg({"cmd": "schedule", "day": "monday", "periods": []}), "D1", "navimow", CFG, client)
+    assert mqtt.results[-1]["result"] == "error" and gw._unofficial_refresh.is_set()
+
+
+async def test_broken_vehicle_type_gives_error_result():
+    _known(1)
+    cfg = {"unofficial_devices": [{"device_id": "D1", "vehicle_sn": "SN1", "vehicle_type": "abc"}]}
+    mqtt, client = FakeMqtt(), FakeClient()
+    await gw._handle_unofficial_command(mqtt, _msg({"cmd": "dock"}), "D1", "navimow", cfg, client)
+    assert mqtt.results[-1]["result"] == "error"
+
+
+async def test_poll_isolates_failures_and_backs_off(monkeypatch):
+    import asyncio
+    import types
+    snap = types.ModuleType("navimow_unofficial_snapshot")
+
+    async def fetch_zones(client, sn, vt, cache):
+        if sn == "BAD":
+            raise RuntimeError("boom")
+        return [{"id": 1, "name": "Z", "area": None}]
+
+    async def fetch_schedule(client, sn, zones):
+        return {"monday": {"enabled": True, "periods": [], "text": "x"}}
+
+    snap.fetch_zones, snap.fetch_schedule = fetch_zones, fetch_schedule
+    monkeypatch.setitem(sys.modules, "navimow_unofficial_snapshot", snap)
+    queued = []
+    monkeypatch.setattr(gw, "_queue_retained", lambda topic, payload: queued.append(topic))
+    gw._unofficial_schedule.clear()
+    shutdown, timeouts = asyncio.Event(), []
+
+    async def fake_wait_for(coro, timeout):
+        coro.close()
+        timeouts.append(timeout)
+        if len(timeouts) >= 3:
+            shutdown.set()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(gw.asyncio, "wait_for", fake_wait_for)
+    cfg = {"unofficial_devices": [{"device_id": "B", "vehicle_sn": "BAD"}, {"device_id": "G", "vehicle_sn": "OK"}]}
+    await gw.task_unofficial_poll(cfg, object(), "navimow", shutdown)
+    assert "navimow/G/zones" in queued and "G" in gw._unofficial_schedule
+    assert timeouts == [60, 120, 240]

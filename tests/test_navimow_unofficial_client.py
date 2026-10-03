@@ -150,3 +150,11 @@ async def test_set_day_schedule_stops_when_mower_refuses():
     with pytest.raises(NavimowError):
         await _client(session).set_day_schedule("SN1", 160000001, 2, True, [])
     assert len(session.calls) == 1
+
+
+async def test_set_day_schedule_cloud_copy_failure_is_distinct():
+    session = _FakeSession([{"code": 1, "data": {}}, {"code": 9999, "desc": "boom"}])
+    with pytest.raises(NavimowError, match="Cloud-Kopie") as exc:
+        await _client(session).set_day_schedule("SN1", 160000001, 2, True, [])
+    assert exc.value.code == 9999 and "boom" in str(exc.value)
+    assert len(session.calls) == 2

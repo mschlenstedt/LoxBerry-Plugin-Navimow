@@ -193,3 +193,79 @@ def test_parse_schedule_empty_v2_list_does_not_fall_back_to_plan():
     set_list = {"workPlanV2": [], "plan": [{"day": 2, "open": 1, "period": [[36, 48]]}]}
     out = plan.parse_schedule(set_list, {})
     assert out["monday"]["enabled"] is False
+
+
+# --- Final-Review-Fixwelle ---------------------------------------------------
+
+def test_hhmm_to_slot_end_midnight():
+    assert plan.hhmm_to_slot("24:00", end=True) == 96
+    assert plan.hhmm_to_slot("00:00", end=True) == 96
+    assert plan.hhmm_to_slot("00:00") == 0
+    with pytest.raises(plan.PlanError):
+        plan.hhmm_to_slot("24:00")
+    with pytest.raises(plan.PlanError):
+        plan.hhmm_to_slot("24:15", end=True)
+
+
+def test_build_schedule_end_midnight():
+    payload = {"day": "monday", "periods": [{"start": "22:00", "end": "00:00"}]}
+    assert plan.build_schedule(payload, []) == (
+        2, True, [{"start_time": 88, "end_time": 96, "partition_ids": []}])
+
+
+CURRENT = {"enabled": True, "text": "x",
+           "periods": [{"start": "09:00", "end": "12:00", "zones": [1]}, {"start": "22:00", "end": "24:00", "zones": []}]}
+
+
+def test_build_schedule_without_periods_keeps_current_windows():
+    day, enabled, periods = plan.build_schedule({"day": "monday", "enabled": False}, [1], current_day=CURRENT)
+    assert (day, enabled) == (2, False)
+    assert periods == [{"start_time": 36, "end_time": 48, "partition_ids": [1]},
+                       {"start_time": 88, "end_time": 96, "partition_ids": []}]
+
+
+def test_build_schedule_without_periods_needs_current_plan():
+    with pytest.raises(plan.PlanError, match="noch nicht gelesen"):
+        plan.build_schedule({"day": "monday", "enabled": False}, [1])
+
+
+def test_build_schedule_explicit_empty_periods_clears():
+    assert plan.build_schedule({"day": "monday", "periods": []}, [], current_day=CURRENT) == (2, True, [])
+
+
+def test_build_schedule_overlap_allowed_when_disabled():
+    payload = {"day": "monday", "enabled": False,
+               "periods": [{"start": "09:00", "end": "12:00"}, {"start": "10:00", "end": "13:00"}]}
+    day, enabled, periods = plan.build_schedule(payload, [])
+    assert enabled is False and len(periods) == 2
+    with pytest.raises(plan.PlanError, match="überlappen"):
+        plan.build_schedule({**payload, "enabled": True}, [])
+
+
+def test_build_schedule_zones_need_known_map():
+    payload = {"day": "monday", "periods": [{"start": "09:00", "end": "12:00", "zones": [1]}]}
+    with pytest.raises(plan.PlanError, match="Karte ist noch nicht gelesen"):
+        plan.build_schedule(payload, [])
+    assert plan.build_schedule({"day": "monday", "periods": [{"start": "09:00", "end": "12:00"}]}, [])[2]
+
+
+def test_as_float_rejects_non_finite():
+    assert plan._as_float("nan") is None
+    assert plan._as_float(float("inf")) is None
+    assert plan._as_float("12.5") == 12.5
+
+
+def test_partition_plan_hex_two_periods_two_zones():
+    # Tag 1, an, 2 Perioden:
+    # 01 01 01 02 | 24 30 02 0500 0100 | 38 40 01 0201
+    # (36=09:00, 48=12:00, Zonen 5 und 1 als LE-uint16; 56=14:00, 64=16:00, Zone 258=0x0102 -> 02 01)
+    got = plan.partition_plan_hex(1, True, [
+        {"start_time": 36, "end_time": 48, "partition_ids": [5, 1]},
+        {"start_time": 56, "end_time": 64, "partition_ids": [258]}])
+    assert got == "01010102" "243002" "05000100" "384001" "0201"
+
+
+def test_parse_schedule_non_list_partition_ids():
+    parsed = plan.parse_schedule({"plan_v2": [{"day": 2, "open": 1, "period": [
+        {"start_time": 36, "end_time": 48, "partition_ids": 5}]}]}, {})
+    assert parsed["monday"]["periods"] == [{"start": "09:00", "end": "12:00", "zones": []}]

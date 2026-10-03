@@ -77,3 +77,30 @@ async def test_refresh_all_hosts_down_raises_network(monkeypatch):
     with pytest.raises(auth_mod.PassportError) as err:
         await auth_mod.refresh(None, auth_mod.Tokens("AT", "RT", "U", "fra"))
     assert err.value.code == "network"
+
+
+async def test_refresh_moves_on_from_non_json_host(monkeypatch):
+    hosts = []
+
+    async def fake(session, host, path, params, *, method, timeout=20):
+        hosts.append(host)
+        if len(hosts) == 1:
+            raise ValueError("not json")
+        return {"resultCode": "90000", "data": {"access_token": "AT2", "refresh_token": "RT2"}}
+
+    monkeypatch.setattr(auth_mod, "_request", fake)
+    new = await auth_mod.refresh(None, auth_mod.Tokens("AT", "RT", "U", "fra"))
+    assert new.access_token == "AT2" and len(hosts) == 2
+
+
+async def test_lookup_region_moves_on_from_non_json_host(monkeypatch):
+    hosts = []
+
+    async def fake(session, host, path, params, *, method, timeout=20):
+        hosts.append(host)
+        if len(hosts) == 1:
+            raise ValueError("not json")
+        return {"resultCode": "90000", "data": {"region": "fra"}}
+
+    monkeypatch.setattr(auth_mod, "_request", fake)
+    assert await auth_mod.lookup_region(None, "benutzer@example.com") == "fra"
