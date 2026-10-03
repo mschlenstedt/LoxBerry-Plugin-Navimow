@@ -20,6 +20,8 @@ import aiohttp
 import paho.mqtt.client as _paho
 import aiomqtt
 
+import navimow_unofficial_plan
+
 # ── CLI args ──────────────────────────────────────────────────────────────────
 _ap = argparse.ArgumentParser(add_help=False)
 _ap.add_argument("--logfile",   default="")
@@ -492,6 +494,14 @@ _device_state:        dict           = {}
 _state_publish_queue: asyncio.Queue  = asyncio.Queue(maxsize=64)
 _location_queue:      asyncio.Queue  = asyncio.Queue(maxsize=64)
 _event_queue:         asyncio.Queue  = asyncio.Queue(maxsize=64)
+_retained_queue:      asyncio.Queue  = asyncio.Queue(maxsize=64)
+
+
+def _queue_retained(topic: str, payload: dict) -> None:
+    try:
+        _retained_queue.put_nowait({"topic": topic, "payload": json.dumps(payload)})
+    except asyncio.QueueFull:
+        LOGWARN(f"Retained queue full, dropped {topic}")
 
 # Default values for all known state fields — published when the real value is
 # not yet available (e.g. mowing fields before the first mowing session after restart).
@@ -968,6 +978,16 @@ async def task_navimow_to_mqtt(
                         except Exception as e:
                             LOGWARN(f"Event publish error: {e}")
 
+                    while not _retained_queue.empty():
+                        try:
+                            item = _retained_queue.get_nowait()
+                            await lbmqtt.publish(item["topic"], item["payload"], retain=True)
+                            LOGDEB(f"Published {item['topic']}")
+                        except asyncio.QueueEmpty:
+                            break
+                        except Exception as e:
+                            LOGWARN(f"Retained publish error: {e}")
+
                     global _auth_dirty
                     if _auth_dirty and _auth_payload:
                         _auth_dirty = False
@@ -1229,6 +1249,45 @@ async def task_unofficial_token_refresh(
         delay = 55 * 60
 
 
+_UNOFFICIAL_POLL_INTERVAL = 30 * 60  # Karte und Plan ändern sich selten; nach einem Schreibbefehl sofort.
+_unofficial_zone_cache: dict = {}    # device_id -> navimow_unofficial_plan.ZoneCache
+_unofficial_refresh: asyncio.Event = asyncio.Event()
+
+
+def _unofficial_known_zone_ids(device_id: str) -> list:
+    cache = _unofficial_zone_cache.get(device_id)
+    return [z["id"] for z in cache.zones] if cache else []
+
+
+async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: str,
+                               shutdown: asyncio.Event) -> None:
+    """Liest Zonen und Wochenplan jedes zugeordneten Mähers und veröffentlicht sie retained."""
+    if unofficial_client is None:
+        return
+    import navimow_unofficial_snapshot as snapshot
+    while not shutdown.is_set():
+        for mapping in plugin_cfg.get("unofficial_devices", []):
+            did, sn = mapping.get("device_id"), mapping.get("vehicle_sn")
+            if not did or not sn:
+                continue
+            cache = _unofficial_zone_cache.setdefault(did, navimow_unofficial_plan.ZoneCache())
+            try:
+                zones = await snapshot.fetch_zones(unofficial_client, sn, int(mapping.get("vehicle_type") or 0), cache)
+                schedule = await snapshot.fetch_schedule(unofficial_client, sn, zones)
+            except Exception as e:
+                LOGWARN(f"Unofficial poll for {did} failed: {e}")
+                continue
+            now = int(time.time())
+            _queue_retained(f"{base_topic}/{did}/zones", {**navimow_unofficial_plan.zones_payload(zones), "ts": now})
+            _queue_retained(f"{base_topic}/{did}/schedule", {**schedule, "ts": now})
+            LOGINF(f"Unofficial snapshot for {did}: {len(zones)} zone(s)")
+        _unofficial_refresh.clear()
+        try:
+            await asyncio.wait_for(_unofficial_refresh.wait(), timeout=_UNOFFICIAL_POLL_INTERVAL)
+        except asyncio.TimeoutError:
+            pass
+
+
 # ── Task 10: REST Poll ────────────────────────────────────────────────────────
 _REST_POLL_INTERVAL = 300  # seconds
 
@@ -1478,6 +1537,9 @@ async def main() -> None:
             asyncio.create_task(
                 task_unofficial_token_refresh(plugin_cfg, session, unofficial_client,
                                             base_topic, _shutdown_event)
+            ),
+            asyncio.create_task(
+                task_unofficial_poll(plugin_cfg, unofficial_client, base_topic, _shutdown_event)
             ),
             asyncio.create_task(
                 task_rest_poll(session, plugin_cfg, _shutdown_event)
