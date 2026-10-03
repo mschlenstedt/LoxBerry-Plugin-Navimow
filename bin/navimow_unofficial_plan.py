@@ -162,3 +162,137 @@ def zones_payload(zones: list[dict]) -> dict:
         "text": ", ".join(f"{z['id']} {z['name']}" for z in zones),
         "list": zones,
     }
+
+
+_DAY_ALIASES = {
+    "sonntag": "sunday", "montag": "monday", "dienstag": "tuesday", "mittwoch": "wednesday",
+    "donnerstag": "thursday", "freitag": "friday", "samstag": "saturday",
+    "so": "sunday", "mo": "monday", "di": "tuesday", "mi": "wednesday",
+    "do": "thursday", "fr": "friday", "sa": "saturday",
+    "sun": "sunday", "mon": "monday", "tue": "tuesday", "wed": "wednesday",
+    "thu": "thursday", "fri": "friday", "sat": "saturday",
+}
+
+
+def parse_day(value: Any) -> int:
+    text = str(value or "").strip().lower()
+    name = _DAY_ALIASES.get(text, text)
+    if name not in WEEKDAYS:
+        raise PlanError(f"Unbekannter Wochentag: {value!r} (z. B. monday oder montag)")
+    return WEEKDAYS.index(name) + 1
+
+
+def hhmm_to_slot(value: Any) -> int:
+    """'HH:MM' -> 15-Minuten-Slot. Zeiten außerhalb des Rasters würden sonst still abgerundet."""
+    parts = str(value or "").strip().split(":")
+    hours = _as_int(parts[0]) if parts and parts[0] else None
+    minutes = _as_int(parts[1]) if len(parts) > 1 else 0
+    if hours is None or minutes is None or not (0 <= hours <= 23 and 0 <= minutes <= 59):
+        raise PlanError(f"Ungültige Uhrzeit {value!r} (Format HH:MM)")
+    if minutes % SLOT_MINUTES:
+        raise PlanError(
+            f"Ungültige Uhrzeit {value!r}: der Mäher plant in 15-Minuten-Schritten, "
+            "Minuten nur 00, 15, 30 oder 45"
+        )
+    return (hours * 60 + minutes) // SLOT_MINUTES
+
+
+def slot_to_hhmm(slot: int) -> str:
+    minutes = int(slot) * SLOT_MINUTES
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def build_schedule(payload: dict, known_ids: list[int]) -> tuple[int, bool, list[dict]]:
+    """(Tag 1-7, an/aus, Perioden in Slots) für {"cmd": "schedule", "day", "enabled", "periods"}."""
+    day = parse_day(payload.get("day"))
+    enabled = as_bool(payload.get("enabled"), True)
+    raw = payload.get("periods") or []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raise PlanError("periods ist kein gültiges JSON") from None
+    if not isinstance(raw, list):
+        raise PlanError("periods muss eine Liste sein")
+    periods = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise PlanError("Jedes Zeitfenster braucht start und end")
+        start, end = hhmm_to_slot(item.get("start")), hhmm_to_slot(item.get("end"))
+        if end <= start:
+            raise PlanError(
+                f"Zeitfenster {slot_to_hhmm(start)}–{slot_to_hhmm(end)}: das Ende muss nach dem Beginn liegen"
+            )
+        zones = parse_zone_ids(item.get("zones"))
+        check_zones(zones, known_ids)
+        periods.append({"start_time": start, "end_time": end, "partition_ids": zones})
+    periods.sort(key=lambda p: p["start_time"])
+    for first, second in zip(periods, periods[1:]):
+        if second["start_time"] < first["end_time"]:
+            raise PlanError(
+                f"Zeitfenster überlappen: {slot_to_hhmm(first['start_time'])}–{slot_to_hhmm(first['end_time'])} "
+                f"und {slot_to_hhmm(second['start_time'])}–{slot_to_hhmm(second['end_time'])}"
+            )
+    return day, enabled, periods
+
+
+def partition_plan_hex(day: int, enabled: bool, periods: list[dict]) -> str:
+    """Tagesplan für den s:mower-Gerätebefehl.
+
+    01 <Tag> <an> <Anzahl Perioden> [<Start> <Ende> <Anzahl Zonen> <Zonen-ID>...]...
+    Einzelbytes außer den Zonen-IDs (little-endian uint16). Eine Zonen-ID als ein
+    Byte verschiebt alle folgenden Bytes, der Mäher liest das als zusätzliche
+    Phantom-Periode, die sich in der App nicht mehr löschen lässt.
+    """
+    out = ["%02X" % (x & 0xFF) for x in (1, int(day), 1 if enabled else 0, len(periods))]
+    for period in periods:
+        ids = [int(z) for z in (period.get("partition_ids") or [])]
+        out.append("%02X%02X%02X" % (int(period["start_time"]) & 0xFF, int(period["end_time"]) & 0xFF, len(ids)))
+        out.append(encode_partition_ids(ids).upper())
+    return "".join(out)
+
+
+def _schedule_source(set_list: Any) -> Any:
+    """Der gültige Plan steht in workPlanV2/plan_v2; das alte Feld plan bleibt eingefroren."""
+    if not isinstance(set_list, dict):
+        return None
+    return set_list.get("plan_v2") or set_list.get("workPlanV2") or set_list.get("plan")
+
+
+def parse_schedule(set_list: Any, zone_names: dict) -> dict:
+    out = {day: {"enabled": False, "periods": [], "text": "aus"} for day in WEEKDAYS}
+    source = _schedule_source(set_list)
+    for entry in source if isinstance(source, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        day = _as_int(entry.get("day"))
+        if day is None or not 1 <= day <= 7:
+            continue
+        periods = []
+        for item in entry.get("period") or []:
+            if isinstance(item, dict):
+                start, end, raw_ids = _as_int(item.get("start_time")), _as_int(item.get("end_time")), item.get("partition_ids") or []
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                start, end, raw_ids = _as_int(item[0]), _as_int(item[1]), []
+            else:
+                continue
+            if start is None or end is None:
+                continue
+            ids = [z for z in (_as_int(x) for x in raw_ids) if z is not None]
+            periods.append({"start": slot_to_hhmm(start), "end": slot_to_hhmm(end), "zones": ids})
+        try:
+            enabled = as_bool(entry.get("open"), False)
+        except PlanError:
+            enabled = False
+        if not enabled:
+            text = "aus"
+        elif not periods:
+            text = "an, ohne Zeitfenster"
+        else:
+            text = ", ".join(
+                f"{p['start']}–{p['end']} "
+                + (" + ".join(zone_names.get(z, f"Zone {z}") for z in p["zones"]) if p["zones"] else "alle Zonen")
+                for p in periods
+            )
+        out[WEEKDAYS[day - 1]] = {"enabled": enabled, "periods": periods, "text": text}
+    return out

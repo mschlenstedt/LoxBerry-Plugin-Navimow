@@ -91,3 +91,76 @@ def test_extract_zones_from_plain_map_detail():
 def test_zones_payload_for_loxone():
     p = plan.zones_payload([{"id": 1, "name": "Vorgarten", "area": 20.0}, {"id": 2, "name": "Garten", "area": None}])
     assert p["count"] == 2 and p["ids"] == "1,2" and p["text"] == "1 Vorgarten, 2 Garten"
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("sunday", 1), ("Monday", 2), ("montag", 2), ("Mo", 2), ("sa", 7), ("Samstag", 7),
+])
+def test_parse_day_accepts_english_and_german(value, expected):
+    assert plan.parse_day(value) == expected
+
+
+def test_parse_day_rejects_unknown():
+    with pytest.raises(plan.PlanError):
+        plan.parse_day("feiertag")
+
+
+def test_hhmm_to_slot_on_grid_only():
+    assert plan.hhmm_to_slot("09:00") == 36
+    assert plan.hhmm_to_slot("23:45") == 95
+    assert plan.slot_to_hhmm(36) == "09:00"
+    for bad in ("09:47", "25:00", "9h", ""):
+        with pytest.raises(plan.PlanError):
+            plan.hhmm_to_slot(bad)
+
+
+def test_build_schedule_sorts_and_validates():
+    day, enabled, periods = plan.build_schedule({
+        "day": "monday", "enabled": True,
+        "periods": [{"start": "14:00", "end": "16:00"}, {"start": "09:00", "end": "12:00", "zones": "1"}],
+    }, [1, 2])
+    assert (day, enabled) == (2, True)
+    assert periods == [
+        {"start_time": 36, "end_time": 48, "partition_ids": [1]},
+        {"start_time": 56, "end_time": 64, "partition_ids": []},
+    ]
+
+
+def test_build_schedule_accepts_periods_as_json_text():
+    _, _, periods = plan.build_schedule({"day": "mo", "periods": '[{"start":"09:00","end":"10:00"}]'}, [])
+    assert periods == [{"start_time": 36, "end_time": 40, "partition_ids": []}]
+
+
+@pytest.mark.parametrize("periods,needle", [
+    ([{"start": "12:00", "end": "09:00"}], "Ende"),
+    ([{"start": "09:00", "end": "12:00"}, {"start": "11:00", "end": "13:00"}], "überlappen"),
+    ([{"start": "09:10", "end": "12:00"}], "15-Minuten"),
+])
+def test_build_schedule_refuses_bad_periods(periods, needle):
+    with pytest.raises(plan.PlanError) as err:
+        plan.build_schedule({"day": "monday", "periods": periods}, [])
+    assert needle in str(err.value)
+
+
+def test_partition_plan_hex_known_vectors():
+    assert plan.partition_plan_hex(2, True, [{"start_time": 36, "end_time": 48, "partition_ids": [1]}]) == "010201012430010100"
+    assert plan.partition_plan_hex(2, True, [{"start_time": 36, "end_time": 48, "partition_ids": []}]) == "01020101243000"
+    assert plan.partition_plan_hex(2, False, []) == "01020000"
+
+
+def test_parse_schedule_prefers_plan_v2_and_names_zones():
+    set_list = {
+        "plan": [{"day": 2, "open": 1, "period": [[0, 4]]}],
+        "workPlanV2": [
+            {"day": 2, "open": "01", "period": [{"start_time": 36, "end_time": 48, "partition_ids": [1]},
+                                                {"start_time": 56, "end_time": 64, "partition_ids": []}]},
+            {"day": 3, "open": 0, "period": []},
+        ],
+    }
+    out = plan.parse_schedule(set_list, {1: "Vorgarten"})
+    assert out["monday"]["enabled"] is True
+    assert out["monday"]["periods"][0] == {"start": "09:00", "end": "12:00", "zones": [1]}
+    assert out["monday"]["text"] == "09:00–12:00 Vorgarten, 14:00–16:00 alle Zonen"
+    assert out["tuesday"] == {"enabled": False, "periods": [], "text": "aus"}
+    assert set(out) == set(plan.WEEKDAYS)
+    assert plan.parse_schedule(None, {})["sunday"]["text"] == "aus"
