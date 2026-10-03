@@ -6,8 +6,9 @@
 .nm-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .nm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 16px; align-items: start; }
 @media (max-width: 860px) { .nm-strip, .nm-grid { grid-template-columns: 1fr; } }
+.nm [hidden] { display: none !important; }
 .nm .lb-card { padding: 0; margin: 0; min-width: 0; overflow: hidden; }
-.nm-tile { padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+.nm .lb-card.nm-tile { padding: 14px 16px; display: grid; gap: 10px; align-content: start; }
 .nm-split { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
 .nm-eyebrow { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--nm-muted); font-weight: 600; }
 .nm-desc { font-size: .85rem; color: var(--nm-muted); }
