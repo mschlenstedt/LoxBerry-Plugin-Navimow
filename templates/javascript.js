@@ -71,10 +71,6 @@ const L = {
     ST_STARTING:     '<TMPL_VAR "UNOFFICIAL.STATUS_STARTING" ESCAPE=JS>',
     ST_ERROR:        '<TMPL_VAR "UNOFFICIAL.STATUS_ERROR" ESCAPE=JS>',
     ST_MAP:          '<TMPL_VAR "UNOFFICIAL.STATUS_MAP" ESCAPE=JS>',
-    SH_NONE:         '<TMPL_VAR "UNOFFICIAL.SHORT_NONE" ESCAPE=JS>',
-    SH_CONNECTED:    '<TMPL_VAR "UNOFFICIAL.SHORT_CONNECTED" ESCAPE=JS>',
-    SH_MAP:          '<TMPL_VAR "UNOFFICIAL.SHORT_MAP" ESCAPE=JS>',
-    SH_ERROR:        '<TMPL_VAR "UNOFFICIAL.SHORT_ERROR" ESCAPE=JS>',
     SH_STARTING:     '<TMPL_VAR "UNOFFICIAL.SHORT_STARTING" ESCAPE=JS>',
     LBL_SINCE:       '<TMPL_VAR "UNOFFICIAL.LABEL_SINCE" ESCAPE=JS>',
     LBL_TOPIC:       '<TMPL_VAR "UNOFFICIAL.LABEL_TOPIC" ESCAPE=JS>',
@@ -216,10 +212,6 @@ function renderUnofficial() {
     }[view];
     setPill('nm_un_pill', pills[0], pills[1], pills[2]);
     setPill('nm_un_pill2', pills[0], pills[1], pills[2]);
-    $('nm_un_short').textContent = {
-        working: L.ST_WORKING, busy: L.GW_RESTARTING, connected: L.SH_CONNECTED + ' ' + fmtSince(u.since),
-        map: L.SH_MAP, error: L.SH_ERROR, starting: L.SH_STARTING, gwdown: L.GW_DESC_STOP, none: L.SH_NONE,
-    }[view];
 
     const sig = unofficialSignature(view);
     if (sig === lastSig) return;
