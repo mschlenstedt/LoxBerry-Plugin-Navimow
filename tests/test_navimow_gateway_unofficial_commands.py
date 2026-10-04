@@ -42,7 +42,7 @@ class FakeClient:
 @pytest.fixture(autouse=True)
 def _isolate_unofficial_state(monkeypatch):
     for name in ("_unofficial_settings", "_unofficial_device", "_unofficial_fault", "_official_model",
-                 "_unofficial_schedule", "_device_state", "_unofficial_last_payload"):
+                 "_unofficial_schedule", "_device_state"):
         monkeypatch.setattr(gw, name, {})
     gw._unofficial_refresh.clear()
 
@@ -305,7 +305,7 @@ async def test_poll_active_fault_uses_30s_and_short_rounds_read_only_state_and_c
     await run(3)
     assert timeouts == [30, 30, 30]
     assert calls.count("zones") == 1 and calls.count("settings") == 1 and calls.count("fault") == 3
-    assert queued.count("navimow/D1/fault") == 1 and queued.count("navimow/D1/zones") == 1   # unverändert: nicht erneut
+    assert queued.count("navimow/D1/fault") == 3 and queued.count("navimow/D1/zones") == 1
 
 
 async def test_update_state_sets_refresh_on_error_mowing_and_returning_transitions():
@@ -434,9 +434,9 @@ async def test_poll_interval_attentive_shortly_before_scheduled_start(monkeypatc
     assert _interval(settings={"schedule_enabled": False}) == 120
 
 
-async def test_poll_full_round_every_sixth_round_and_publishes_only_changes(monkeypatch):
+async def test_poll_full_round_every_sixth_round(monkeypatch):
     calls, queued, payloads, timeouts, run = _poll_env(monkeypatch)
     await run(7)
     assert timeouts == [120] * 7
     assert calls.count("zones") == 2 and calls.count("fault") == 7     # Runde 1 und 7 voll
-    assert queued.count("navimow/D1/coverage") == 1 and queued.count("navimow/D1/zones") == 1
+    assert queued.count("navimow/D1/coverage") == 7 and queued.count("navimow/D1/zones") == 2

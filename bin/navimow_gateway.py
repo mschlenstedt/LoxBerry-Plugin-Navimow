@@ -1296,7 +1296,6 @@ _unofficial_settings: dict = {}      # device_id -> zuletzt gelesene Einstellung
 _unofficial_device: dict = {}        # device_id -> Fähigkeiten aus get-device-info (parse_device), einmal je Lauf
 _unofficial_fault: dict = {}         # device_id -> letzter Fehlerzustand (parse_fault)
 _official_model: dict = {}           # device_id -> Modell aus der offiziellen Geräteliste, nur RAM
-_unofficial_last_payload: dict = {}  # (device_id, Topic-Endung) -> zuletzt veröffentlichter Inhalt ohne ts
 # Abfragetakt in Sekunden wie navimow_pro (const.py): jede Runde Zustand/Fehler und Abdeckung,
 # jede _UNOFFICIAL_SLOW_EVERY-te Runde zusätzlich Karte, Wochenplan und Einstellungen.
 _UNOFFICIAL_POLL_MOWING = 3
@@ -1337,14 +1336,9 @@ def _unofficial_poll_interval(plugin_cfg: dict) -> int:
     return interval
 
 
-def _queue_unofficial(base_topic: str, did: str, suffix: str, payload: dict, now: int, force: bool) -> bool:
-    """Retained veröffentlichen, wenn sich der Inhalt geändert hat oder force (volle Runde); True = veröffentlicht."""
-    key = (did, suffix)
-    if not force and _unofficial_last_payload.get(key) == payload:
-        return False
-    _unofficial_last_payload[key] = payload
+def _queue_unofficial(base_topic: str, did: str, suffix: str, payload: dict, now: int) -> None:
+    """Retained veröffentlichen; ob sich ein Wert geändert hat, entscheidet das MQTT-Gateway des LoxBerry."""
     _queue_retained(f"{base_topic}/{did}/{suffix}", {**payload, "ts": now})
-    return True
 
 
 async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: str,
@@ -1356,13 +1350,11 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
     full = True                # volle Runde: zusätzlich Karte, Wochenplan, Einstellungen
     cycle = 0                  # kurze Runden seit der letzten vollen
     backoff = 0                # > 0: Wartezeit nach Lesefehlern, verdoppelt bis _UNOFFICIAL_POLL_INTERVAL
-    last_forced = None         # Zeitpunkt, ab dem unveränderte Inhalte wieder einmal veröffentlicht werden
     while not shutdown.is_set():
         # Vor dem Lesen leeren: ein währenddessen fertiger Schreibbefehl behält sein Signal.
         _unofficial_refresh.clear()
         failed = False         # Kern der vollen Runde (Karte/Plan/Einstellungen) gescheitert
         light_failed = False   # Zustand/Fehler nicht lesbar
-        force = full and (last_forced is None or time.monotonic() - last_forced >= _UNOFFICIAL_POLL_INTERVAL)
         for mapping in plugin_cfg.get("unofficial_devices", []):
             did, sn = mapping.get("device_id"), mapping.get("vehicle_sn")
             if not did or not sn:
@@ -1397,11 +1389,11 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
                         _unofficial_device[did] = device
                 elif not device.get("model") and model:
                     device = _unofficial_device[did] = {**device, "model": model}
-                _queue_unofficial(base_topic, did, "zones", navimow_unofficial_plan.zones_payload(zones), now, force)
-                _queue_unofficial(base_topic, did, "schedule", schedule, now, force)
+                _queue_unofficial(base_topic, did, "zones", navimow_unofficial_plan.zones_payload(zones), now)
+                _queue_unofficial(base_topic, did, "schedule", schedule, now)
                 _queue_unofficial(base_topic, did, "settings",
                                   {**navimow_unofficial_settings.settings_payload(settings),
-                                   **navimow_unofficial_settings.device_payload(device, settings)}, now, force)
+                                   **navimow_unofficial_settings.device_payload(device, settings)}, now)
                 _unofficial_schedule[did] = schedule
                 _unofficial_settings[did] = settings
                 LOGDEB(f"Unofficial snapshot for {did}: {len(zones)} zone(s), {len(settings)} setting(s)")
@@ -1411,8 +1403,11 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
                 light_failed = True
                 LOGWARN(f"Unofficial fault state for {did} failed: {e}")
             else:
-                if _queue_unofficial(base_topic, did, "fault", navimow_unofficial_fault.fault_payload(fault), now, force):
-                    LOGINF(f"Unofficial state for {did}: {fault['state_code']} active={fault['active']} {fault['text']}")
+                _queue_unofficial(base_topic, did, "fault", navimow_unofficial_fault.fault_payload(fault), now)
+                previous = _unofficial_fault.get(did) or {}
+                changed = (previous.get("state_code"), previous.get("active")) != (fault["state_code"], fault["active"])
+                (LOGINF if changed else LOGDEB)(
+                    f"Unofficial state for {did}: {fault['state_code']} active={fault['active']} {fault['text']}")
                 _unofficial_fault[did] = fault
             try:
                 cache = _unofficial_zone_cache.get(did)
@@ -1420,11 +1415,9 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
             except Exception as e:
                 LOGWARN(f"Unofficial coverage for {did} failed: {e}")
                 coverage = None
-            if coverage and _queue_unofficial(base_topic, did, "coverage",
-                                              navimow_unofficial_plan.coverage_payload(coverage), now, force):
+            if coverage:
+                _queue_unofficial(base_topic, did, "coverage", navimow_unofficial_plan.coverage_payload(coverage), now)
                 LOGDEB(f"Unofficial coverage for {did}: {coverage['overall_pct']} %")
-        if force:
-            last_forced = time.monotonic()
         if failed or light_failed:
             backoff = min(backoff * 2, _UNOFFICIAL_POLL_INTERVAL) if backoff else _UNOFFICIAL_POLL_BACKOFF
         else:
