@@ -52,6 +52,7 @@ const L = {
     OFF_BTN:         '<TMPL_VAR "TOKEN.BTN_AUTHENTICATE" ESCAPE=JS>',
     OFF_BTN_FIRST:   '<TMPL_VAR "TOKEN.BTN_AUTHENTICATE_FIRST" ESCAPE=JS>',
     HINT:            '<TMPL_VAR "UNOFFICIAL.HINT" ESCAPE=JS>',
+    WARN_APP:        '<TMPL_VAR "UNOFFICIAL.WARN_APP" ESCAPE=JS>',
     EMAIL:           '<TMPL_VAR "UNOFFICIAL.LABEL_EMAIL" ESCAPE=JS>',
     PASSWORD:        '<TMPL_VAR "UNOFFICIAL.LABEL_PASSWORD" ESCAPE=JS>',
     BTN_CONNECT:     '<TMPL_VAR "UNOFFICIAL.BTN_CONNECT" ESCAPE=JS>',
@@ -234,6 +235,7 @@ function renderUnofficial() {
         const base = u.base_topic || root.dataset.base || 'navimow';
         const dev = (u.mapping && u.mapping[0] && u.mapping[0].device_id) || '&lt;device_id&gt;';
         html = notice + '<div class="nm-note ok"><b class="nm-ico">✓</b><span>' + esc(L.OK_CONNECTED) + '</span></div>' +
+            '<div class="nm-note warn"><b class="nm-ico">!</b><span>' + esc(L.WARN_APP) + '</span></div>' +
             '<dl class="nm-kv"><dt>' + esc(L.LBL_SINCE) + '</dt><dd>' + esc(fmtSince(u.since)) + '</dd>' +
             '<dt>' + esc(L.LBL_ZONES) + '</dt><dd>' + esc(u.zones_text || L.ZONES_NONE) + '</dd>' +
             '<dt>' + esc(L.LBL_TOPIC) + '</dt><dd class="nm-mono">' + esc(base) + '/' + (dev === '&lt;device_id&gt;' ? dev : esc(dev)) + '/set_unofficial</dd></dl>';
@@ -257,6 +259,7 @@ function renderUnofficial() {
         const errText = S.err || (u.error ? L.ERR_SESSION + ' ' + u.error : '');
         const dis = S.busy ? ' disabled' : '';
         html = notice + '<p class="nm-hint">' + esc(L.HINT) + '</p>' +
+            '<div class="nm-note warn"><b class="nm-ico">!</b><span>' + esc(L.WARN_APP) + '</span></div>' +
             (errText ? '<div class="nm-note err" role="alert"><b class="nm-ico">!</b><span>' + esc(errText) + '</span></div>' : '') +
             '<div class="nm-form">' +
             '<div class="nm-field"><label for="nm_email">' + esc(L.EMAIL) + '</label>' +

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime, timedelta
 from typing import Any
 
 # Navimow zählt die Wochentage ab Sonntag: 1 = Sonntag ... 7 = Samstag.
@@ -385,3 +386,23 @@ def coverage_payload(coverage: dict) -> dict:
         out[f"zone_{z['id']}_pct"] = z["pct"]
     out["list"] = zones
     return out
+
+
+def seconds_to_next_start(schedule: dict | None, now: datetime) -> float | None:
+    """Sekunden bis zum nächsten Beginn eines aktiven Zeitfensters heute oder morgen (Plan aus parse_schedule)."""
+    best = None
+    for offset in (0, 1):
+        day = now + timedelta(days=offset)
+        entry = (schedule or {}).get(WEEKDAYS[(day.weekday() + 1) % 7]) or {}   # weekday(): Montag = 0
+        if not entry.get("enabled"):
+            continue
+        for period in entry.get("periods") or []:
+            try:
+                hour, minute = (int(part) for part in str(period.get("start", "")).split(":"))
+            except ValueError:
+                continue
+            start = day.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=hour, minutes=minute)
+            delta = (start - now).total_seconds()
+            if delta >= 0 and (best is None or delta < best):
+                best = delta
+    return best

@@ -303,3 +303,16 @@ def test_coverage_payload_flat_keys_for_loxone():
     assert p["count"] == 2 and p["zone_1_pct"] == 100 and p["zone_2_pct"] == 45
     assert p["text"] == "Vorne 100 %, Zone 2 45 %"
     assert p["overall_pct"] == 67 and len(p["list"]) == 2 and "zones" not in p
+
+
+def test_seconds_to_next_start_today_tomorrow_and_disabled():
+    from datetime import datetime
+    sched = {"monday": {"enabled": True, "periods": [{"start": "11:00"}, {"start": "09:00"}]},
+             "tuesday": {"enabled": True, "periods": [{"start": "08:30"}]},
+             "sunday": {"enabled": False, "periods": [{"start": "10:00"}]}}
+    monday_0850 = datetime(2026, 10, 5, 8, 50)
+    assert plan.seconds_to_next_start(sched, monday_0850) == 600
+    assert plan.seconds_to_next_start(sched, datetime(2026, 10, 5, 12, 0)) == (20 * 60 + 30) * 60
+    assert plan.seconds_to_next_start(sched, datetime(2026, 10, 4, 9, 0)) == 24 * 3600   # Sonntag aus -> Montag 09:00
+    assert plan.seconds_to_next_start({"monday": {"enabled": True, "periods": [{"start": "kaputt"}]}}, monday_0850) is None
+    assert plan.seconds_to_next_start(None, monday_0850) is None

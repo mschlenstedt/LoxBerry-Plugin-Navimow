@@ -42,7 +42,7 @@ class FakeClient:
 @pytest.fixture(autouse=True)
 def _isolate_unofficial_state(monkeypatch):
     for name in ("_unofficial_settings", "_unofficial_device", "_unofficial_fault", "_official_model",
-                 "_unofficial_schedule", "_device_state"):
+                 "_unofficial_schedule", "_device_state", "_unofficial_last_payload"):
         monkeypatch.setattr(gw, name, {})
     gw._unofficial_refresh.clear()
 
@@ -187,7 +187,7 @@ async def test_poll_isolates_failures_and_backs_off(monkeypatch):
     await gw.task_unofficial_poll(cfg, object(), "navimow", shutdown)
     assert "navimow/G/zones" in queued and "G" in gw._unofficial_schedule
     assert "navimow/G/settings" in queued and "navimow/G/fault" in queued
-    assert timeouts == [60, 120, 240]
+    assert timeouts == [120, 120, 240]          # Backoff 60/120/240, mindestens der Ruhetakt 120 s
 
 
 # ── Hilfen für die Poll-Tests unten ──────────────────────────────────────────
@@ -262,7 +262,7 @@ async def test_poll_new_reads_failing_keep_zones_plan_and_settings(monkeypatch):
     assert {"navimow/D1/zones", "navimow/D1/schedule", "navimow/D1/settings"} <= set(queued)
     assert "navimow/D1/fault" not in queued
     assert "D1" not in gw._unofficial_device and "D1" not in gw._unofficial_fault
-    assert timeouts == [1800]                       # kein Backoff
+    assert timeouts == [120]                        # Ruhetakt; Backoff 60 s liegt darunter
 
 
 async def test_poll_does_not_cache_empty_device_and_passes_official_model(monkeypatch):
@@ -273,7 +273,7 @@ async def test_poll_does_not_cache_empty_device_and_passes_official_model(monkey
     models = []
     calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_device=empty_device)
     gw._official_model["D1"] = "i215"
-    await run(2)
+    await run(7)                                    # Runde 1 und 7 sind voll
     assert models == ["i215", "i215"] and "D1" not in gw._unofficial_device
 
 
@@ -296,24 +296,24 @@ async def test_poll_cut_height_not_writable_without_reported_height(monkeypatch)
     assert payloads["navimow/D1/settings"]["cut_height_writable"] == 0
 
 
-async def test_poll_active_fault_uses_120s_and_fault_rounds_read_only_the_fault(monkeypatch):
+async def test_poll_active_fault_uses_30s_and_short_rounds_read_only_state_and_coverage(monkeypatch):
     async def active_fault(client, sn, vt):
         calls.append("fault")
         return {**OK_FAULT, "active": True, "codes": ["6004"], "text": "x"}
 
     calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_fault=active_fault)
     await run(3)
-    assert timeouts == [120, 120, 120]
+    assert timeouts == [30, 30, 30]
     assert calls.count("zones") == 1 and calls.count("settings") == 1 and calls.count("fault") == 3
-    assert queued.count("navimow/D1/fault") == 3 and queued.count("navimow/D1/zones") == 1
+    assert queued.count("navimow/D1/fault") == 1 and queued.count("navimow/D1/zones") == 1   # unverändert: nicht erneut
 
 
-async def test_update_state_sets_refresh_on_error_and_mowing_transitions():
+async def test_update_state_sets_refresh_on_error_mowing_and_returning_transitions():
     gw._update_state("D1", {"vehicleState_desc": "docked"})
     assert not gw._unofficial_refresh.is_set()
-    gw._update_state("D1", {"vehicleState_desc": "returning"})
+    gw._update_state("D1", {"vehicleState_desc": "paused"})
     assert not gw._unofficial_refresh.is_set()
-    for desc in ("mowing", "paused", "error", "docked"):
+    for desc in ("mowing", "returning", "docked", "error", "docked"):
         gw._update_state("D1", {"vehicleState_desc": desc})
         assert gw._unofficial_refresh.is_set(), desc
         gw._unofficial_refresh.clear()
@@ -328,11 +328,11 @@ async def test_poll_publishes_coverage_every_round(monkeypatch):
     assert p["zone_1_pct"] == 50 and p["count"] == 1 and "ts" in p
 
 
-async def test_poll_while_mowing_uses_120s_and_reads_coverage_in_short_rounds(monkeypatch):
+async def test_poll_while_mowing_uses_3s_and_reads_coverage_in_short_rounds(monkeypatch):
     calls, queued, payloads, timeouts, run = _poll_env(monkeypatch)
     gw._device_state["D1"] = {"vehicleState_desc": "mowing"}
     await run(3)
-    assert timeouts == [120, 120, 120]
+    assert timeouts == [3, 3, 3]
     assert calls.count("zones") == 1 and calls.count("coverage") == 3 and calls.count("fault") == 3
 
 
@@ -343,7 +343,7 @@ async def test_poll_coverage_failure_or_empty_keeps_rest(monkeypatch):
     calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_coverage=boom)
     await run(1)
     assert "navimow/D1/coverage" not in queued and "navimow/D1/fault" in queued
-    assert timeouts == [1800]
+    assert timeouts == [120]
 
     async def empty(client, sn, zones):
         return None
@@ -391,3 +391,52 @@ async def test_setting_refused_while_mowing_explains():
     mqtt = FakeMqtt()
     await gw._handle_unofficial_command(mqtt, _msg({"cmd": "setting", "key": "sound", "value": 0}), "D1", "navimow", CFG, Client())
     assert "mäht" in mqtt.results[-1]["reason"]
+
+
+def _interval(desc=None, fault=None, schedule=None, settings=None):
+    if desc:
+        gw._device_state["D1"] = {"vehicleState_desc": desc}
+    if fault:
+        gw._unofficial_fault["D1"] = {**OK_FAULT, **fault}
+    if schedule is not None:
+        gw._unofficial_schedule["D1"] = schedule
+    if settings is not None:
+        gw._unofficial_settings["D1"] = settings
+    return gw._unofficial_poll_interval(CFG)
+
+
+async def test_poll_interval_follows_navimow_pro():
+    assert _interval() == 120
+    assert _interval(desc="mowing") == 3
+
+
+async def test_poll_interval_returning_fault_and_unknown_state():
+    assert _interval(fault={"state_code": "0220"}) == 12
+    gw._unofficial_fault.clear()
+    assert _interval(fault={"active": True, "state_code": "0399"}) == 30
+    gw._unofficial_fault.clear()
+    assert _interval(fault={"state_code": "0599"}) == 30
+    gw._unofficial_fault.clear()
+    assert _interval(desc="error") == 30
+
+
+async def test_poll_interval_attentive_shortly_before_scheduled_start(monkeypatch):
+    from datetime import datetime as real_datetime
+
+    class FixedNow(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 10, 5, 10, 50)          # Montag 10:50
+
+    monkeypatch.setattr(gw, "datetime", FixedNow)
+    plan_ = {"monday": {"enabled": True, "periods": [{"start": "11:00", "end": "15:00", "zones": []}], "text": ""}}
+    assert _interval(schedule=plan_) == 30
+    assert _interval(settings={"schedule_enabled": False}) == 120
+
+
+async def test_poll_full_round_every_sixth_round_and_publishes_only_changes(monkeypatch):
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch)
+    await run(7)
+    assert timeouts == [120] * 7
+    assert calls.count("zones") == 2 and calls.count("fault") == 7     # Runde 1 und 7 voll
+    assert queued.count("navimow/D1/coverage") == 1 and queued.count("navimow/D1/zones") == 1
