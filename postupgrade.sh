@@ -38,7 +38,6 @@ elif [ ! -f "$GATEWAY" ]; then
 else
     LBPCONFIGDIR="$ARGV5/config/plugins/$ARGV3"
     LBPLOGDIR="$ARGV5/log/plugins/$ARGV3"
-    LBSCONFIG="$ARGV5/config/system"
     mkdir -p "$LBPLOGDIR"
 
     # Register log entry in LoxBerry log database so loglist_html() finds it
@@ -59,7 +58,6 @@ else
         --logfile    "$LOGFILE" \
         --logdbkey   "$LOGDBKEY" \
         --configdir  "$LBPCONFIGDIR" \
-        --lbsconfig  "$LBSCONFIG" \
         </dev/null >>"$LOGFILE" 2>&1 &
 
     echo "<OK> Gateway started (PID $!)"

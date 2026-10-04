@@ -21,6 +21,8 @@ import aiohttp
 import paho.mqtt.client as _paho
 import aiomqtt
 
+from loxberry import io as lbio, system as lbsystem   # LoxBerry-Python-Bibliothek (ab LoxBerry 4.0.0.15)
+
 import navimow_unofficial_plan
 import navimow_unofficial_settings
 import navimow_unofficial_fault
@@ -30,25 +32,17 @@ _ap = argparse.ArgumentParser(add_help=False)
 _ap.add_argument("--logfile",   default="")
 _ap.add_argument("--logdbkey",  default="")
 _ap.add_argument("--configdir", default="")
-_ap.add_argument("--lbsconfig", default="")
 # Fallback 7 wie LoxBerry::Log, wenn in der Plugin-Datenbank kein Level steht.
 # Im Normalbetrieb übergeben daemon.sh und ajax.cgi den dort eingestellten Wert.
 _ap.add_argument("--loglevel",  type=int, default=7)
 _args, _ = _ap.parse_known_args()
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-# Installiert liegt das Skript unter <LBHOMEDIR>/bin/plugins/<Pluginordner>/ — daraus beides ableiten,
-# falls die Umgebung LBHOMEDIR nicht setzt (der Pluginordner ist dynamisch).
-_SCRIPT      = Path(__file__).resolve()
-LBHOMEDIR    = os.environ.get("LBHOMEDIR") or str(_SCRIPT.parents[3])
-LBSCONFIG    = Path(_args.lbsconfig or os.environ.get("LBSCONFIG") or Path(LBHOMEDIR) / "config/system")
-CONFIGDIR    = Path(_args.configdir) if _args.configdir else Path(LBHOMEDIR) / "config/plugins" / _SCRIPT.parent.name
-GENERAL_JSON = LBSCONFIG / "general.json"
+# Pfade aus der LoxBerry-Bibliothek; --configdir nur als Überschreibung (Tests, Fehlersuche).
+CONFIGDIR    = Path(_args.configdir or lbsystem.lbpconfigdir)
 PLUGIN_CFG   = CONFIGDIR / "pluginconfig.json"
 PID_FILE     = Path("/dev/shm/navimow_gateway.pid")
 # Pluginordner nie hartkodieren — er steht im Pfad, den der Aufrufer übergibt.
-PLUGIN_FOLDER = CONFIGDIR.name
-PLUGINDB      = Path(LBHOMEDIR) / "data/system/plugindatabase.json"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 _loglevel = _args.loglevel
@@ -94,22 +88,12 @@ def LOGDEB(msg: str)   -> None: _log(7, "DEBUG", msg)
 
 
 def _plugindb_loglevel() -> int:
-    """Der in der WebUI eingestellte Loglevel, oder -1 wenn nicht ermittelbar.
-
-    Gelesen wird ausschließlich die Plugin-Datenbank (lesend, wie es auch
-    LoxBerry::System::pluginloglevel tut). Die Log-Datenbank wird nicht angefasst
-    — dafür ist allein die Perl-Bibliothek zuständig.
-    """
+    """Der in der WebUI eingestellte Loglevel (LoxBerry-Bibliothek), oder -1 wenn nicht ermittelbar."""
     try:
-        with open(PLUGINDB, encoding="utf-8") as f:
-            plugins = (json.load(f) or {}).get("plugins") or {}
-        for entry in plugins.values():
-            if isinstance(entry, dict) and entry.get("folder") == PLUGIN_FOLDER:
-                level = entry.get("loglevel")
-                return int(level) if str(level).strip() != "" else -1
+        level = lbsystem.pluginloglevel()
+        return int(level) if str(level).strip() != "" else -1
     except Exception:
-        pass
-    return -1
+        return -1
 
 
 def _logend() -> None:
@@ -145,10 +129,6 @@ def _save_json_atomic(path: Path, data: dict) -> None:
     except Exception as e:
         tmp.unlink(missing_ok=True)
         LOGERR(f"Cannot write {path}: {e}")
-
-
-def load_general_config() -> dict:
-    return _load_json(GENERAL_JSON)
 
 
 _EPHEMERAL_FIELDS = frozenset(("access_token", "expires_at", "token_type"))
@@ -194,10 +174,6 @@ def save_plugin_config(cfg: dict) -> None:
     _save_json_atomic(PLUGIN_CFG, on_disk)
 
 
-def _is_enabled(val) -> bool:
-    return str(val).strip().lower() in ("true", "1", "yes", "on")
-
-
 def _str_or_none(val):
     if val is None:
         return None
@@ -205,24 +181,14 @@ def _str_or_none(val):
     return s if s else None
 
 
-def get_mqtt_broker_config(general: dict) -> dict:
-    mqtt = general.get("Mqtt", {})
-    host     = mqtt.get("Brokerhost", "localhost")
-    port     = int(mqtt.get("Brokerport", 1883))
-    username = _str_or_none(mqtt.get("Brokeruser"))
-    password = _str_or_none(mqtt.get("Brokerpass"))
-    use_local = _is_enabled(mqtt.get("Uselocalbroker", "true"))
-    tls = tls_verify = False
-    tls_cafile = None
-    if use_local and _is_enabled(mqtt.get("Tlsenabled", "false")):
-        tls       = True
-        tls_cafile = "/etc/mosquitto/tls/ca.crt"
-        port       = int(mqtt.get("Tlsport", 8883))
-    elif not use_local and _is_enabled(mqtt.get("TlsExternalEnabled", "false")):
-        tls        = True
-        tls_verify = _is_enabled(mqtt.get("TlsExternalValidatecert", "false"))
-    return {"host": host, "port": port, "username": username, "password": password,
-            "tls": tls, "tls_verify": tls_verify, "tls_cafile": tls_cafile}
+def get_mqtt_broker_config() -> dict:
+    """Broker des LoxBerry aus der Bibliothek (LoxBerry::IO::mqtt_connectiondetails)."""
+    cred = lbio.mqtt_connectiondetails()
+    tls = bool(cred.get("tls"))
+    return {"host": cred.get("brokerhost") or "localhost",
+            "port": int((cred.get("tls_brokerport") if tls else cred.get("brokerport")) or 1883),
+            "username": _str_or_none(cred.get("brokeruser")), "password": _str_or_none(cred.get("brokerpass")),
+            "tls": tls, "tls_verify": bool(cred.get("tls_verify")), "tls_cafile": cred.get("tls_cafile")}
 
 
 def _build_mqtt_kwargs(broker: dict) -> dict:
@@ -1568,9 +1534,8 @@ async def main() -> None:
     except NotImplementedError:
         pass
 
-    general    = load_general_config()
     plugin_cfg = load_plugin_config()
-    broker     = get_mqtt_broker_config(general)
+    broker     = get_mqtt_broker_config()
 
     LOGINF(f"LoxBerry MQTT broker: {broker['host']}:{broker['port']} "
            f"tls={broker['tls']} user={'set' if broker['username'] else 'none'}")
