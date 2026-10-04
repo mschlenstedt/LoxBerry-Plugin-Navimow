@@ -161,3 +161,129 @@ def settings_payload(settings: dict) -> dict:
         else:
             out[name] = value
     return out
+
+
+# Was eine Modellfamilie trotz gemeldetem Feld nachweislich nicht hat
+# (navimow_pro const.FAMILY_LACKS, jeweils im Feld bestätigt). Präfix des Modellnamens.
+FAMILY_LACKS = (
+    ("I1", frozenset({"cut_height_mm"})),     # i105/i108/i110: Schnitthöhe per Drehknopf am Gerät
+    ("X3", frozenset({"charging_limit"})),    # X315…X390: die App bietet keine Ladegrenze an
+)
+
+
+def model_lacks(model: Any, name: str) -> bool:
+    text = str(model or "").strip().upper()
+    return any(text.startswith(prefix) and name in names for prefix, names in FAMILY_LACKS)
+
+
+def parse_device(device_info: Any, model: str = "") -> dict:
+    """Fähigkeiten, die der Mäher selbst in get-device-info meldet."""
+    heights = find(device_info, "mowingHeightList")
+    options = sorted({v for v in (_read_int(h) for h in heights) if v is not None}) if isinstance(heights, list) else []
+    limits: dict = {}
+    for name, lo_key, hi_key in (("return_battery_level", "returnBatteryLevelMin", "returnBatteryLevelMax"),
+                                 ("charging_limit", "chargingLimitMin", "chargingLimitMax")):
+        lo, hi = _read_int(find(device_info, lo_key)), _read_int(find(device_info, hi_key))
+        if lo is not None and hi is not None and lo < hi:   # halbe Bereiche wären schlechter als der feste
+            limits[name] = (lo, hi)
+    return {
+        "model": str(model or find(device_info, "model") or "").strip(),
+        "cut_height_options": options,
+        "cut_height_flag": _read_int(find(device_info, "isCutterHeight")) == 1,
+        "limits": limits,
+    }
+
+
+def cut_height_writable(device: dict | None) -> bool:
+    """Wie navimow_pro.cut_height_control: Motor-Flag oder mindestens zwei gemeldete Stufen, nicht bei I1."""
+    if not device or model_lacks(device.get("model"), "cut_height_mm"):
+        return False
+    return bool(device.get("cut_height_flag")) or len(device.get("cut_height_options") or []) >= 2
+
+
+def device_payload(device: dict) -> dict:
+    return {
+        "cut_height_writable": 1 if cut_height_writable(device) else 0,
+        "cut_height_options": ",".join(str(h) for h in device.get("cut_height_options") or []),
+    }
+
+
+@dataclass(frozen=True)
+class SettingWrite:
+    name: str
+    robot: dict | None   # Gerätebefehl (s:mower); None = alter Weg, nur Cloud
+    cloud: dict          # save-set-data data
+    iot: bool
+
+
+def _value_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower() if value is not None else ""
+    if text in ("1", "true", "on", "an", "ja", "yes"):
+        return True
+    if text in ("0", "false", "off", "aus", "nein", "no"):
+        return False
+    raise SettingError(f"Ungültiger Wert {value!r}: erlaubt sind 1/0, an/aus, true/false")
+
+
+def _value_number(value: Any, name: str) -> int:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise SettingError(f"Ungültiger Wert {value!r} für {name}: eine Zahl wird erwartet") from None
+    if number != int(number):
+        raise SettingError(f"Ungültiger Wert {value!r} für {name}: eine ganze Zahl wird erwartet")
+    return int(number)
+
+
+def build_setting(payload: dict, current: dict | None, device: dict | None = None) -> SettingWrite:
+    """Prüft {"cmd": "setting", "key": ..., "value": ...} und kodiert ihn für Mäher und Cloud."""
+    name = str(payload.get("key") or "").strip().lower()
+    s = BY_NAME.get(name)
+    if s is None:
+        raise SettingError(f"Unbekannte Einstellung: {name!r}. Möglich sind: {', '.join(BY_NAME)}")
+    if not current:
+        raise SettingError("Die Einstellungen sind noch nicht gelesen. Bitte kurz nach dem Gateway-Start erneut senden.")
+    reported = current.get(name) is not None or (s.gate is not None and current.get(s.gate) is not None)
+    if not reported:
+        raise SettingError(f"{name} meldet dieser Mäher nicht, daher wird sie nicht gesetzt")
+    if device and name != "cut_height_mm" and model_lacks(device.get("model"), name):   # Schnitthöhe: eigene Meldung unten
+        raise SettingError(f"{name} hat dieses Modell nicht")
+    value = payload.get("value")
+    robot_key = s.robot_key or s.write_key
+
+    if s.kind == "bool":
+        on = _value_bool(value)
+        if not s.iot:
+            return SettingWrite(name, None, {s.write_key: "01" if on else "00"}, False)
+        robot = (1 if on else 0) if s.robot_numeric else ("1" if on else "0")
+        cloud = (1 if on else 0) if s.cloud_numeric else ("1" if on else "0")
+        return SettingWrite(name, {robot_key: robot}, {s.write_key: cloud}, True)
+
+    if s.kind == "select":
+        text = str(value).strip().lower() if value is not None else ""
+        number = next((num for opt, num, label in s.options if text in (opt, str(num), label.lower())), None)
+        if number is None:
+            names = ", ".join(f"{opt} ({num})" for opt, num, _ in s.options)
+            raise SettingError(f"Ungültiger Wert {value!r} für {name}: erlaubt sind {names}")
+        robot = number if s.robot_numeric else f"{number:02d}"
+        return SettingWrite(name, {robot_key: robot}, {s.write_key: number}, True)
+
+    number = _value_number(value, name)
+    if name == "cut_height_mm":
+        if device is None:
+            raise SettingError("Die Gerätedaten sind noch nicht gelesen. Bitte kurz nach dem Gateway-Start erneut senden.")
+        if not cut_height_writable(device):
+            raise SettingError("Die Schnitthöhe lässt sich bei diesem Mäher nicht per Befehl setzen (z. B. Drehknopf am Gerät)")
+        options = device.get("cut_height_options") or []
+        if options and number not in options:
+            raise SettingError(f"cut_height_mm: erlaubt sind {', '.join(map(str, options))} mm")
+    if name != "cut_height_mm" or not (device or {}).get("cut_height_options"):
+        lo, hi = (device or {}).get("limits", {}).get(name, (s.minimum, s.maximum))
+        if not lo <= number <= hi or (number - lo) % s.step:
+            raise SettingError(f"{name}: erlaubt sind {lo} bis {hi} in Schritten von {s.step}")
+    wire = number * s.scale
+    robot = f"{wire:02X}" if s.robot_hex else str(wire)
+    cloud = f"{wire:02X}" if s.cloud_hex else wire
+    return SettingWrite(name, {robot_key: robot}, {s.write_key: cloud}, True)
