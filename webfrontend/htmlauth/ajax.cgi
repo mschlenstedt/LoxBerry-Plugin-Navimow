@@ -325,7 +325,7 @@ sub action_getunofficialstatus {
     my @vehicles = ref $cfg->{unofficial_vehicles} eq 'ARRAY' ? @{ $cfg->{unofficial_vehicles} } : ();
     my @devices  = ref $cfg->{devices}             eq 'ARRAY' ? @{ $cfg->{devices} }             : ();
 
-    my $raw  = LoxBerry::IO::mqtt_get("$base_topic/gateway_unofficial");
+    my $raw  = LoxBerry::IO::mqtt_get("$base_topic/gateway_app");
     my $data = (defined $raw && $raw ne '') ? (eval { decode_json($raw) } // {}) : {};
 
     my $zones_text = '';

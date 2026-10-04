@@ -72,7 +72,7 @@ def test_unofficial_status_payload_reports_error_and_since(monkeypatch):
     gw._update_unofficial_auth_status({"unofficial_enabled": True}, "navimow")
     ok = dict(gw._unofficial_auth_payload)
 
-    assert failed["topic"] == "navimow/gateway_unofficial"
+    assert failed["topic"] == "navimow/gateway_app"
     assert failed["authenticated"] is False and failed["error"] == "90002: args missing"
     assert failed["since"] == 0 and failed["enabled"] is True and failed["ts"] > 0
     assert ok["authenticated"] is True and ok["error"] == "" and ok["since"] > 0

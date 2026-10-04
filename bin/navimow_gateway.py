@@ -572,7 +572,7 @@ def _update_unofficial_auth_status(plugin_cfg: dict, base_topic: str) -> None:
     global _unofficial_auth_dirty
     _unofficial_auth_payload.clear()
     _unofficial_auth_payload.update({
-        "topic":         f"{base_topic}/gateway_unofficial",
+        "topic":         f"{base_topic}/gateway_app",
         "state":         "running",
         "enabled":       bool(plugin_cfg.get("unofficial_enabled")),
         "authenticated": _unofficial_session["ok"],
@@ -1009,7 +1009,7 @@ async def task_navimow_to_mqtt(
                         topic = _unofficial_auth_payload["topic"]
                         payload = {k: v for k, v in _unofficial_auth_payload.items() if k != "topic"}
                         await lbmqtt.publish(topic, json.dumps(payload), retain=True)
-                        LOGDEB(f"Published unofficial auth status: authenticated={payload.get('authenticated')}")
+                        LOGDEB(f"Published app API auth status: authenticated={payload.get('authenticated')}")
 
         except Exception as e:
             if not shutdown.is_set():
@@ -1017,7 +1017,7 @@ async def task_navimow_to_mqtt(
                 await asyncio.sleep(10)
 
 
-async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason="none", source="official"):
+async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason="none", source="smarthome"):
     payload = json.dumps({
         "command":    cmd,
         "source":     source,
@@ -1043,7 +1043,7 @@ async def _run_unofficial_command(lbmqtt, message, device_id, base_topic, plugin
         await _handle_unofficial_command(lbmqtt, message, device_id, base_topic,
                                       plugin_cfg, unofficial_client)
     except Exception as e:
-        LOGERR(f"Unofficial command error: {e}")
+        LOGERR(f"App API command error: {e}")
 
 
 async def task_mqtt_to_navimow(
@@ -1059,8 +1059,8 @@ async def task_mqtt_to_navimow(
         try:
             async with aiomqtt.Client(**mqtt_kwargs) as lbmqtt:
                 await lbmqtt.subscribe(f"{base_topic}/+/set")
-                await lbmqtt.subscribe(f"{base_topic}/+/set_unofficial")
-                LOGINF(f"Subscribed to {base_topic}/+/set and {base_topic}/+/set_unofficial")
+                await lbmqtt.subscribe(f"{base_topic}/+/set_app")
+                LOGINF(f"Subscribed to {base_topic}/+/set and {base_topic}/+/set_app")
                 async for message in lbmqtt.messages:
                     if shutdown.is_set():
                         break
@@ -1070,7 +1070,7 @@ async def task_mqtt_to_navimow(
                         continue
                     device_id = parts[-2]
 
-                    if topic_str.endswith("/set_unofficial"):
+                    if topic_str.endswith("/set_app"):
                         task = asyncio.create_task(_run_unofficial_command(
                             lbmqtt, message, device_id, base_topic,
                             plugin_cfg, unofficial_client,
@@ -1094,7 +1094,7 @@ async def task_mqtt_to_navimow(
                     else:
                         LOGERR(f"{canonical}({device_id}) failed: {reason}")
                     await _publish_command_result(lbmqtt, base_topic, device_id,
-                                                  canonical, ok, reason, source="official")
+                                                  canonical, ok, reason, source="smarthome")
         except Exception as e:
             if not shutdown.is_set():
                 LOGERR(f"Command MQTT error: {e} — reconnecting in 10s")
@@ -1116,36 +1116,36 @@ async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plu
         payload = json.loads(message.payload.decode("utf-8", errors="replace"))
         cmd = str(payload.get("cmd", "")).strip().lower()
     except (json.JSONDecodeError, AttributeError):
-        LOGWARN(f"set_unofficial: invalid JSON payload for {device_id}")
+        LOGWARN(f"set_app: invalid JSON payload for {device_id}")
         await _publish_command_result(lbmqtt, base_topic, device_id, "invalid", False,
-                                       "invalid JSON payload", source="unofficial")
+                                       "invalid JSON payload", source="app")
         return
 
     if unofficial_client is None:
-        LOGWARN(f"set_unofficial({cmd}) ignored — unofficial API not configured")
+        LOGWARN(f"set_app({cmd}) ignored — app access not configured")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       "unofficial API not configured", source="unofficial")
+                                       "app access not configured", source="app")
         return
 
     if cmd not in _UNOFFICIAL_COMMANDS:
-        LOGWARN(f"set_unofficial: unknown command {cmd}")
+        LOGWARN(f"set_app: unknown command {cmd}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       f"unknown command: {cmd}", source="unofficial")
+                                       f"unknown command: {cmd}", source="app")
         return
 
     device_map = {d.get("device_id"): d for d in plugin_cfg.get("unofficial_devices", []) if d.get("device_id")}
     mapping = device_map.get(device_id)
     if not mapping:
-        LOGWARN(f"set_unofficial({cmd}): no vehicle_sn mapping for {device_id}")
+        LOGWARN(f"set_app({cmd}): no vehicle_sn mapping for {device_id}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       "no vehicle_sn mapping for this device", source="unofficial")
+                                       "no vehicle_sn mapping for this device", source="app")
         return
 
     sn = mapping.get("vehicle_sn", "")
     if not sn:
-        LOGWARN(f"set_unofficial({cmd}): no vehicle_sn value for {device_id}")
+        LOGWARN(f"set_app({cmd}): no vehicle_sn value for {device_id}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       "no vehicle_sn mapping for this device", source="unofficial")
+                                       "no vehicle_sn mapping for this device", source="app")
         return
     refresh_after = False
     try:
@@ -1167,15 +1167,15 @@ async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plu
             await unofficial_client.write_setting(sn, vehicle_type, write)
         else:
             await getattr(unofficial_client, cmd)(sn)
-        LOGOK(f"unofficial {cmd}({device_id})")
-        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True, "ok", source="unofficial")
+        LOGOK(f"app {cmd}({device_id})")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True, "ok", source="app")
     except (navimow_unofficial_plan.PlanError, navimow_unofficial_settings.SettingError) as e:
-        LOGWARN(f"unofficial {cmd}({device_id}) refused: {e}")
-        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, str(e), source="unofficial")
+        LOGWARN(f"app {cmd}({device_id}) refused: {e}")
+        await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, str(e), source="app")
     except Exception as e:
-        LOGERR(f"unofficial {cmd}({device_id}) failed: {e}")
+        LOGERR(f"app {cmd}({device_id}) failed: {e}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
-                                       _unofficial_error_text(e, cmd), source="unofficial")
+                                       _unofficial_error_text(e, cmd), source="app")
     finally:
         if refresh_after:
             _unofficial_refresh.set()
@@ -1275,7 +1275,7 @@ async def task_unofficial_token_refresh(
             import navimow_unofficial_auth
             new_tokens = await navimow_unofficial_auth.refresh(session, unofficial_client.tokens)
         except Exception as e:
-            LOGWARN(f"Unofficial token refresh failed: {e}")
+            LOGWARN(f"App API token refresh failed: {e}")
             _set_unofficial_session(False, str(e))
             _update_unofficial_auth_status(plugin_cfg, base_topic)
             delay = min(delay * 2, 55 * 60) if delay < 55 * 60 else 60
@@ -1284,7 +1284,7 @@ async def task_unofficial_token_refresh(
         _store_unofficial_tokens(plugin_cfg, new_tokens)
         _set_unofficial_session(True)
         _update_unofficial_auth_status(plugin_cfg, base_topic)
-        LOGOK("Unofficial session refreshed")
+        LOGOK("App API session refreshed")
         delay = 55 * 60
 
 
@@ -1363,7 +1363,7 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
                 vt = int(mapping.get("vehicle_type") or 0)
             except (TypeError, ValueError) as e:
                 failed = failed or full
-                LOGWARN(f"Unofficial poll for {did} failed: {e}")
+                LOGWARN(f"App API poll for {did} failed: {e}")
                 continue
             now = int(time.time())
             if full:
@@ -1373,7 +1373,7 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
                     settings, schedule = await snapshot.fetch_settings_and_schedule(unofficial_client, sn, zones)
                 except Exception as e:
                     failed = True
-                    LOGWARN(f"Unofficial poll for {did} failed: {e}")
+                    LOGWARN(f"App API poll for {did} failed: {e}")
                     continue
                 # Modell: Login, sonst offizielle API, sonst das, was get-device-info meldet.
                 model = (next((v.get("model", "") for v in plugin_cfg.get("unofficial_vehicles", [])
@@ -1383,7 +1383,7 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
                     try:
                         device, ok = await snapshot.fetch_device(unofficial_client, sn, model)
                     except Exception as e:
-                        LOGWARN(f"Unofficial device info for {did} failed: {e}")
+                        LOGWARN(f"App API device info for {did} failed: {e}")
                         device, ok = navimow_unofficial_settings.parse_device(None, model), False
                     if ok:
                         _unofficial_device[did] = device
@@ -1396,28 +1396,28 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
                                    **navimow_unofficial_settings.device_payload(device, settings)}, now)
                 _unofficial_schedule[did] = schedule
                 _unofficial_settings[did] = settings
-                LOGDEB(f"Unofficial snapshot for {did}: {len(zones)} zone(s), {len(settings)} setting(s)")
+                LOGDEB(f"App API snapshot for {did}: {len(zones)} zone(s), {len(settings)} setting(s)")
             try:
                 fault = await snapshot.fetch_fault(unofficial_client, sn, vt)
             except Exception as e:
                 light_failed = True
-                LOGWARN(f"Unofficial fault state for {did} failed: {e}")
+                LOGWARN(f"App API fault state for {did} failed: {e}")
             else:
                 _queue_unofficial(base_topic, did, "fault", navimow_unofficial_fault.fault_payload(fault), now)
                 previous = _unofficial_fault.get(did) or {}
                 changed = (previous.get("state_code"), previous.get("active")) != (fault["state_code"], fault["active"])
                 (LOGINF if changed else LOGDEB)(
-                    f"Unofficial state for {did}: {fault['state_code']} active={fault['active']} {fault['text']}")
+                    f"App API state for {did}: {fault['state_code']} active={fault['active']} {fault['text']}")
                 _unofficial_fault[did] = fault
             try:
                 cache = _unofficial_zone_cache.get(did)
                 coverage = await snapshot.fetch_coverage(unofficial_client, sn, cache.zones if cache else [])
             except Exception as e:
-                LOGWARN(f"Unofficial coverage for {did} failed: {e}")
+                LOGWARN(f"App API coverage for {did} failed: {e}")
                 coverage = None
             if coverage:
                 _queue_unofficial(base_topic, did, "coverage", navimow_unofficial_plan.coverage_payload(coverage), now)
-                LOGDEB(f"Unofficial coverage for {did}: {coverage['overall_pct']} %")
+                LOGDEB(f"App API coverage for {did}: {coverage['overall_pct']} %")
         if failed or light_failed:
             backoff = min(backoff * 2, _UNOFFICIAL_POLL_INTERVAL) if backoff else _UNOFFICIAL_POLL_BACKOFF
         else:
@@ -1605,9 +1605,9 @@ async def main() -> None:
                     host=plugin_cfg.get("unofficial_host") or "navimow-fra.ninebot.com",
                 )
                 _set_unofficial_session(True)
-                LOGOK("Unofficial API session established")
+                LOGOK("App API API session established")
             except Exception as e:
-                LOGERR(f"Unofficial API session could not be established: {e}")
+                LOGERR(f"App API API session could not be established: {e}")
                 _set_unofficial_session(False, str(e))
                 unofficial_client = None
         _update_unofficial_auth_status(plugin_cfg, base_topic)
@@ -1716,7 +1716,7 @@ async def main() -> None:
             async with aiomqtt.Client(**_build_mqtt_kwargs(broker)) as lbmqtt:
                 await lbmqtt.publish(gw_topic, json.dumps({"state": "stopped"}), retain=True)
                 await lbmqtt.publish(
-                    f"{base_topic}/gateway_unofficial",
+                    f"{base_topic}/gateway_app",
                     json.dumps({"state": "stopped",
                                 "enabled": bool(plugin_cfg.get("unofficial_enabled")),
                                 "authenticated": False, "error": "", "since": 0,

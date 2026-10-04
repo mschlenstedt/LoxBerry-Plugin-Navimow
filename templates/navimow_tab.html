@@ -93,8 +93,9 @@
 
   <div class="nm-grid">
     <section class="lb-card" aria-labelledby="nm_off_title">
-      <div class="nm-head"><h3 id="nm_off_title"><TMPL_VAR "TOKEN.HEADER"></h3><span id="nm_off_pill2" class="nm-pill">…</span></div>
+      <div class="nm-head"><h3 id="nm_off_title"><TMPL_VAR "TOKEN.HEADER"> <span class="nm-tag"><TMPL_VAR "TOKEN.TAG"></span></h3><span id="nm_off_pill2" class="nm-pill">…</span></div>
       <div class="nm-body">
+        <p class="nm-hint"><TMPL_VAR "TOKEN.HINT"></p>
         <dl class="nm-kv">
           <dt><TMPL_VAR "TOKEN.LABEL_EXPIRES"></dt><dd id="nm_off_valid">–</dd>
           <dt><TMPL_VAR "DEVICES.HEADER"></dt>

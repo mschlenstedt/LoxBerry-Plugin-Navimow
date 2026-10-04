@@ -62,7 +62,7 @@ async def test_mow_all_zones_uses_known_zones():
     mqtt, client = FakeMqtt(), FakeClient()
     await gw._handle_unofficial_command(mqtt, _msg({"cmd": "mow"}), "D1", "navimow", CFG, client)
     assert client.calls == [("mow", "SN1", "01000200", 0x21)]
-    assert mqtt.results[-1]["result"] == "ok" and mqtt.results[-1]["source"] == "unofficial"
+    assert mqtt.results[-1]["result"] == "ok" and mqtt.results[-1]["source"] == "app"
 
 
 async def test_schedule_writes_and_triggers_refresh():
