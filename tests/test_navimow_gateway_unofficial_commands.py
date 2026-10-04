@@ -148,10 +148,17 @@ async def test_poll_isolates_failures_and_backs_off(monkeypatch):
             raise RuntimeError("boom")
         return [{"id": 1, "name": "Z", "area": None}]
 
-    async def fetch_schedule(client, sn, zones):
-        return {"monday": {"enabled": True, "periods": [], "text": "x"}}
+    async def fetch_settings_and_schedule(client, sn, zones):
+        return {"sound": True}, {"monday": {"enabled": True, "periods": [], "text": "x"}}
 
-    snap.fetch_zones, snap.fetch_schedule = fetch_zones, fetch_schedule
+    async def fetch_device(client, sn, model=""):
+        return {}
+
+    async def fetch_fault(client, sn, vt):
+        return {"active": False, "codes": [], "text": "", "state_code": "0101", "state_text": ""}
+
+    snap.fetch_zones, snap.fetch_settings_and_schedule = fetch_zones, fetch_settings_and_schedule
+    snap.fetch_device, snap.fetch_fault = fetch_device, fetch_fault
     monkeypatch.setitem(sys.modules, "navimow_unofficial_snapshot", snap)
     queued = []
     monkeypatch.setattr(gw, "_queue_retained", lambda topic, payload: queued.append(topic))

@@ -64,6 +64,7 @@ def _vehicle_list(unofficial: list) -> list:
         "vehicle_sn": str(v.get("vehicle_sn", "")),
         "vehicle_type": int(v.get("vehicle_type", 0) or 0),
         "name": str(v.get("vehicle_name") or v.get("name") or ""),
+        "model": str(v.get("subType") or v.get("vehicle_model") or ""),
     } for v in unofficial if v.get("vehicle_sn")]
 
 

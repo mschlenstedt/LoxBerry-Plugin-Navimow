@@ -50,7 +50,59 @@ async def test_fetch_zones_keeps_last_known_when_no_map():
     assert await snap.fetch_zones(client, "SN1", 1, cache) == cache.zones
 
 
-async def test_fetch_schedule_uses_zone_names():
-    client = FakeClient({}, set_list={"workPlanV2": [{"day": 2, "open": 1, "period": [{"start_time": 36, "end_time": 48, "partition_ids": [1]}]}]})
-    out = await snap.fetch_schedule(client, "SN1", [{"id": 1, "name": "Vorgarten", "area": None}])
-    assert out["monday"]["text"] == "09:00–12:00 Vorgarten"
+async def test_fetch_settings_and_schedule_reads_set_list_once():
+    calls = []
+
+    class Client(FakeClient):
+        async def set_list(self, sn):
+            calls.append(sn)
+            return {"startPlan": "1", "soundSwitch": 0,
+                    "workPlanV2": [{"day": 2, "open": 1, "period": [{"start_time": 36, "end_time": 48, "partition_ids": [1]}]}]}
+
+    settings, schedule = await snap.fetch_settings_and_schedule(Client({}), "SN1", [{"id": 1, "name": "Vorgarten", "area": None}])
+    assert calls == ["SN1"]
+    assert settings == {"schedule_enabled": True, "sound": False}
+    assert schedule["monday"]["text"] == "09:00–12:00 Vorgarten"
+
+
+async def test_fetch_device_prefers_stored_model():
+    class Client(FakeClient):
+        async def device_info(self, sn):
+            return {"model": "anders", "mowingHeightList": [30, 40], "isCutterHeight": 0}
+
+    d = await snap.fetch_device(Client({}), "SN1", "i215")
+    assert d["model"] == "i215" and d["cut_height_options"] == [30, 40]
+
+
+async def test_fetch_fault_asks_details_only_when_needed():
+    asked = []
+
+    class Client(FakeClient):
+        def __init__(self, state):
+            super().__init__({})
+            self.state = state
+
+        async def index2(self, sn):
+            return {"vehicle_state": self.state}
+
+        async def errors(self, sn, vt):
+            asked.append(sn)
+            return {"list": [{"errorCode": "6007"}]}
+
+    ok = await snap.fetch_fault(Client("0101"), "SN1", 1)
+    bad = await snap.fetch_fault(Client("0310"), "SN1", 1)
+    assert ok["active"] is False and asked == ["SN1"]
+    assert bad["codes"] == ["6007"] and bad["text"].startswith("Mäher wurde angehoben")
+
+
+async def test_fetch_fault_survives_failing_detail_call():
+    class Client(FakeClient):
+        async def index2(self, sn):
+            return {"vehicle_state": "0310"}
+
+        async def errors(self, sn, vt):
+            raise NavimowError(500, "x")
+
+    f = await snap.fetch_fault(Client({}), "SN1", 1)
+    assert f["active"] is True and f["codes"] == []
+
