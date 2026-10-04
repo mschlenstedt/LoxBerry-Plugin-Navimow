@@ -35,8 +35,10 @@ async def fetch_settings_and_schedule(client, sn: str, zones: list[dict]) -> tup
             plan.parse_schedule(set_list, {z["id"]: z["name"] for z in zones}))
 
 
-async def fetch_device(client, sn: str, model: str = "") -> dict:
-    return settings_mod.parse_device(await client.device_info(sn), model)
+async def fetch_device(client, sn: str, model: str = "") -> tuple[dict, bool]:
+    """Fähigkeiten und ob get-device-info Daten geliefert hat (nur dann darf das Ergebnis gemerkt werden)."""
+    info = await client.device_info(sn)
+    return settings_mod.parse_device(info, model), bool(info) and isinstance(info, dict)
 
 
 async def fetch_fault(client, sn: str, vehicle_type: int) -> dict:

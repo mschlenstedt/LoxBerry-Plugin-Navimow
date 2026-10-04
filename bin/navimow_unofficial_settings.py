@@ -6,6 +6,8 @@ Reines Modul ohne I/O.
 """
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -179,7 +181,13 @@ def model_lacks(model: Any, name: str) -> bool:
 def parse_device(device_info: Any, model: str = "") -> dict:
     """Fähigkeiten, die der Mäher selbst in get-device-info meldet."""
     heights = find(device_info, "mowingHeightList")
-    options = sorted({v for v in (_read_int(h) for h in heights) if v is not None}) if isinstance(heights, list) else []
+    if isinstance(heights, str):
+        heights = [part for part in re.split(r"[,;\s]+", heights) if part]
+    if isinstance(heights, list):
+        heights = [h.get("height", h.get("value")) if isinstance(h, dict) else h for h in heights]
+        options = sorted({v for v in (_read_int(h) for h in heights) if v is not None})
+    else:
+        options = []
     limits: dict = {}
     for name, lo_key, hi_key in (("return_battery_level", "returnBatteryLevelMin", "returnBatteryLevelMax"),
                                  ("charging_limit", "chargingLimitMin", "chargingLimitMax")):
@@ -196,14 +204,16 @@ def parse_device(device_info: Any, model: str = "") -> dict:
 
 def cut_height_writable(device: dict | None) -> bool:
     """Wie navimow_pro.cut_height_control: Motor-Flag oder mindestens zwei gemeldete Stufen, nicht bei I1."""
-    if not device or model_lacks(device.get("model"), "cut_height_mm"):
+    if not device or not device.get("model") or model_lacks(device.get("model"), "cut_height_mm"):
         return False
     return bool(device.get("cut_height_flag")) or len(device.get("cut_height_options") or []) >= 2
 
 
-def device_payload(device: dict) -> dict:
+def device_payload(device: dict, settings: dict | None = None) -> dict:
+    """Fähigkeiten fürs Topic; die Schnitthöhe gilt nur als setzbar, wenn der Mäher auch eine Höhe meldet."""
+    writable = cut_height_writable(device) and (settings is None or "cut_height_mm" in settings)
     return {
-        "cut_height_writable": 1 if cut_height_writable(device) else 0,
+        "cut_height_writable": 1 if writable else 0,
         "cut_height_options": ",".join(str(h) for h in device.get("cut_height_options") or []),
     }
 
@@ -230,9 +240,12 @@ def _value_bool(value: Any) -> bool:
 def _value_number(value: Any, name: str) -> int:
     try:
         number = float(value)
-    except (TypeError, ValueError):
+        if not math.isfinite(number):
+            raise ValueError(value)
+        whole = int(number)
+    except (TypeError, ValueError, OverflowError):
         raise SettingError(f"Ungültiger Wert {value!r} für {name}: eine Zahl wird erwartet") from None
-    if number != int(number):
+    if number != whole:
         raise SettingError(f"Ungültiger Wert {value!r} für {name}: eine ganze Zahl wird erwartet")
     return int(number)
 
@@ -271,9 +284,13 @@ def build_setting(payload: dict, current: dict | None, device: dict | None = Non
         return SettingWrite(name, {robot_key: robot}, {s.write_key: number}, True)
 
     number = _value_number(value, name)
-    if name == "cut_height_mm":
-        if device is None:
+    if name in ("cut_height_mm", "charging_limit"):
+        if not device:
             raise SettingError("Die Gerätedaten sind noch nicht gelesen. Bitte kurz nach dem Gateway-Start erneut senden.")
+        if not device.get("model"):
+            raise SettingError(f"Das Modell dieses Mähers ist nicht bekannt, deshalb wird {name} nicht gesetzt. "
+                               "Abhilfe: unter „Erweiterte Befehle“ neu anmelden.")
+    if name == "cut_height_mm":
         if not cut_height_writable(device):
             raise SettingError("Die Schnitthöhe lässt sich bei diesem Mäher nicht per Befehl setzen (z. B. Drehknopf am Gerät)")
         options = device.get("cut_height_options") or []

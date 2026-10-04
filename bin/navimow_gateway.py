@@ -1294,6 +1294,7 @@ _unofficial_schedule: dict = {}      # device_id -> zuletzt gelesener Wochenplan
 _unofficial_settings: dict = {}      # device_id -> zuletzt gelesene Einstellungen (parse_settings)
 _unofficial_device: dict = {}        # device_id -> Fähigkeiten aus get-device-info (parse_device), einmal je Lauf
 _unofficial_fault: dict = {}         # device_id -> letzter Fehlerzustand (parse_fault)
+_official_model: dict = {}           # device_id -> Modell aus der offiziellen Geräteliste, nur RAM
 _UNOFFICIAL_FAULT_POLL = 120         # solange ein Fehler aktiv ist: so oft nachsehen, ob er behoben ist
 _UNOFFICIAL_POLL_BACKOFF = 60        # nach einer Runde mit Lesefehler, verdoppelt bis _UNOFFICIAL_POLL_INTERVAL
 
@@ -1310,51 +1311,77 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
         return
     import navimow_unofficial_snapshot as snapshot
     wait = _UNOFFICIAL_POLL_INTERVAL
+    last_full = time.monotonic()
+    full = True
     while not shutdown.is_set():
         # Vor dem Lesen leeren: ein währenddessen fertiger Schreibbefehl behält sein Signal.
         _unofficial_refresh.clear()
         failed = False
-        fault_seen = False
         for mapping in plugin_cfg.get("unofficial_devices", []):
             did, sn = mapping.get("device_id"), mapping.get("vehicle_sn")
             if not did or not sn:
                 continue
             try:
                 vt = int(mapping.get("vehicle_type") or 0)
-                cache = _unofficial_zone_cache.setdefault(did, navimow_unofficial_plan.ZoneCache())
-                zones = await snapshot.fetch_zones(unofficial_client, sn, vt, cache)
-                settings, schedule = await snapshot.fetch_settings_and_schedule(unofficial_client, sn, zones)
-                if did not in _unofficial_device:
-                    model = next((v.get("model", "") for v in plugin_cfg.get("unofficial_vehicles", [])
-                                  if v.get("vehicle_sn") == sn), "")
-                    _unofficial_device[did] = await snapshot.fetch_device(unofficial_client, sn, model)
-                fault = await snapshot.fetch_fault(unofficial_client, sn, vt)
-                now = int(time.time())
+            except (TypeError, ValueError) as e:
+                failed = failed or full
+                LOGWARN(f"Unofficial poll for {did} failed: {e}")
+                continue
+            now = int(time.time())
+            if full:
+                try:
+                    cache = _unofficial_zone_cache.setdefault(did, navimow_unofficial_plan.ZoneCache())
+                    zones = await snapshot.fetch_zones(unofficial_client, sn, vt, cache)
+                    settings, schedule = await snapshot.fetch_settings_and_schedule(unofficial_client, sn, zones)
+                except Exception as e:
+                    failed = True
+                    LOGWARN(f"Unofficial poll for {did} failed: {e}")
+                    continue
+                # Modell: Login, sonst offizielle API, sonst das, was get-device-info meldet.
+                model = (next((v.get("model", "") for v in plugin_cfg.get("unofficial_vehicles", [])
+                               if v.get("vehicle_sn") == sn), "") or _official_model.get(did, ""))
+                device = _unofficial_device.get(did)
+                if device is None:
+                    try:
+                        device, ok = await snapshot.fetch_device(unofficial_client, sn, model)
+                    except Exception as e:
+                        LOGWARN(f"Unofficial device info for {did} failed: {e}")
+                        device, ok = navimow_unofficial_settings.parse_device(None, model), False
+                    if ok:
+                        _unofficial_device[did] = device
+                elif not device.get("model") and model:
+                    device = _unofficial_device[did] = {**device, "model": model}
                 _queue_retained(f"{base_topic}/{did}/zones", {**navimow_unofficial_plan.zones_payload(zones), "ts": now})
                 _queue_retained(f"{base_topic}/{did}/schedule", {**schedule, "ts": now})
                 _queue_retained(f"{base_topic}/{did}/settings",
                                 {**navimow_unofficial_settings.settings_payload(settings),
-                                 **navimow_unofficial_settings.device_payload(_unofficial_device[did]), "ts": now})
-                _queue_retained(f"{base_topic}/{did}/fault",
-                                {**navimow_unofficial_fault.fault_payload(fault), "ts": now})
+                                 **navimow_unofficial_settings.device_payload(device, settings), "ts": now})
                 _unofficial_schedule[did] = schedule
                 _unofficial_settings[did] = settings
-                _unofficial_fault[did] = fault
-                if fault["active"]:
-                    fault_seen = True
-                LOGINF(f"Unofficial snapshot for {did}: {len(zones)} zone(s), {len(settings)} setting(s), fault={fault['active']}")
+                LOGINF(f"Unofficial snapshot for {did}: {len(zones)} zone(s), {len(settings)} setting(s)")
+            try:
+                fault = await snapshot.fetch_fault(unofficial_client, sn, vt)
             except Exception as e:
-                failed = True
-                LOGWARN(f"Unofficial poll for {did} failed: {e}")
-        if failed:
-            wait = _UNOFFICIAL_POLL_BACKOFF if wait >= _UNOFFICIAL_POLL_INTERVAL else min(wait * 2, _UNOFFICIAL_POLL_INTERVAL)
-        else:
-            wait = _UNOFFICIAL_POLL_INTERVAL
+                LOGWARN(f"Unofficial fault state for {did} failed: {e}")
+                continue
+            _queue_retained(f"{base_topic}/{did}/fault", {**navimow_unofficial_fault.fault_payload(fault), "ts": now})
+            _unofficial_fault[did] = fault
+            LOGINF(f"Unofficial fault state for {did}: active={fault['active']}")
+        if full:
+            last_full = time.monotonic()
+            if failed:
+                wait = _UNOFFICIAL_POLL_BACKOFF if wait >= _UNOFFICIAL_POLL_INTERVAL else min(wait * 2, _UNOFFICIAL_POLL_INTERVAL)
+            else:
+                wait = _UNOFFICIAL_POLL_INTERVAL
+        fault_seen = any((_unofficial_fault.get(m.get("device_id")) or {}).get("active")
+                         for m in plugin_cfg.get("unofficial_devices", []))
         effective = min(wait, _UNOFFICIAL_FAULT_POLL) if fault_seen else wait
         try:
             await asyncio.wait_for(_unofficial_refresh.wait(), timeout=effective)
+            full = True
         except asyncio.TimeoutError:
-            pass
+            # Nur der Fehlertakt abgelaufen: dann nur den Fehlerzustand lesen.
+            full = effective >= wait or time.monotonic() - last_full >= wait
 
 
 # ── Task 10: REST Poll ────────────────────────────────────────────────────────
@@ -1556,6 +1583,8 @@ async def main() -> None:
                                              or dev.get("fwVersion")
                                              or dev.get("firmware")),
                             }.items() if v is not None}
+                            if mower_info.get("model"):
+                                _official_model[did] = str(mower_info["model"])
                             await lbmqtt.publish(
                                 f"{base_topic}/{did}/mower",
                                 json.dumps(mower_info), retain=True

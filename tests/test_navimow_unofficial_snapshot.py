@@ -70,8 +70,17 @@ async def test_fetch_device_prefers_stored_model():
         async def device_info(self, sn):
             return {"model": "anders", "mowingHeightList": [30, 40], "isCutterHeight": 0}
 
-    d = await snap.fetch_device(Client({}), "SN1", "i215")
-    assert d["model"] == "i215" and d["cut_height_options"] == [30, 40]
+    d, ok = await snap.fetch_device(Client({}), "SN1", "i215")
+    assert ok and d["model"] == "i215" and d["cut_height_options"] == [30, 40]
+
+
+async def test_fetch_device_reports_empty_answer_as_not_ok():
+    class Client(FakeClient):
+        async def device_info(self, sn):
+            return {}
+
+    d, ok = await snap.fetch_device(Client({}), "SN1", "i215")
+    assert not ok and d["model"] == "i215"
 
 
 async def test_fetch_fault_asks_details_only_when_needed():

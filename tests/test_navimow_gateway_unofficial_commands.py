@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bin"))
 import navimow_gateway as gw  # noqa: E402
 import navimow_unofficial_plan as plan  # noqa: E402
@@ -35,6 +37,14 @@ class FakeClient:
         if self.fail:
             raise self.fail
         self.calls.append(("dock", sn))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_unofficial_state(monkeypatch):
+    for name in ("_unofficial_settings", "_unofficial_device", "_unofficial_fault", "_official_model",
+                 "_unofficial_schedule", "_device_state"):
+        monkeypatch.setattr(gw, name, {})
+    gw._unofficial_refresh.clear()
 
 
 def _msg(payload):
@@ -152,7 +162,7 @@ async def test_poll_isolates_failures_and_backs_off(monkeypatch):
         return {"sound": True}, {"monday": {"enabled": True, "periods": [], "text": "x"}}
 
     async def fetch_device(client, sn, model=""):
-        return {}
+        return {"model": model, "cut_height_options": [], "cut_height_flag": False, "limits": {}}, True
 
     async def fetch_fault(client, sn, vt):
         return {"active": False, "codes": [], "text": "", "state_code": "0101", "state_text": ""}
@@ -176,7 +186,132 @@ async def test_poll_isolates_failures_and_backs_off(monkeypatch):
     cfg = {"unofficial_devices": [{"device_id": "B", "vehicle_sn": "BAD"}, {"device_id": "G", "vehicle_sn": "OK"}]}
     await gw.task_unofficial_poll(cfg, object(), "navimow", shutdown)
     assert "navimow/G/zones" in queued and "G" in gw._unofficial_schedule
+    assert "navimow/G/settings" in queued and "navimow/G/fault" in queued
     assert timeouts == [60, 120, 240]
+
+
+# ── Hilfen für die Poll-Tests unten ──────────────────────────────────────────
+OK_FAULT = {"active": False, "codes": [], "text": "", "state_code": "0101", "state_text": ""}
+
+
+def _poll_env(monkeypatch, **overrides):
+    """Snapshot-Attrappe + abgefangenes wait_for; liefert (calls, queued, payloads, timeouts, shutdown, run)."""
+    import asyncio
+    import types
+    calls, queued, payloads, timeouts = [], [], {}, []
+    snap = types.ModuleType("navimow_unofficial_snapshot")
+
+    async def fetch_zones(client, sn, vt, cache):
+        calls.append("zones")
+        return [{"id": 1, "name": "Z", "area": None}]
+
+    async def fetch_settings_and_schedule(client, sn, zones):
+        calls.append("settings")
+        return {"cut_height_mm": 60}, {"monday": {"enabled": True, "periods": [], "text": "x"}}
+
+    async def fetch_device(client, sn, model=""):
+        calls.append("device")
+        return {"model": model, "cut_height_options": [], "cut_height_flag": True, "limits": {}}, True
+
+    async def fetch_fault(client, sn, vt):
+        calls.append("fault")
+        return dict(OK_FAULT)
+
+    snap.fetch_zones, snap.fetch_settings_and_schedule = fetch_zones, fetch_settings_and_schedule
+    snap.fetch_device, snap.fetch_fault = fetch_device, fetch_fault
+    for k, v in overrides.items():
+        setattr(snap, k, v)
+    monkeypatch.setitem(sys.modules, "navimow_unofficial_snapshot", snap)
+
+    def queue(topic, payload):
+        queued.append(topic)
+        payloads[topic] = payload
+
+    monkeypatch.setattr(gw, "_queue_retained", queue)
+    shutdown = asyncio.Event()
+
+    def run(rounds, cfg=None):
+        async def fake_wait_for(coro, timeout):
+            coro.close()
+            timeouts.append(timeout)
+            if len(timeouts) >= rounds:
+                shutdown.set()
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(gw.asyncio, "wait_for", fake_wait_for)
+        return gw.task_unofficial_poll(cfg or CFG, object(), "navimow", shutdown)
+
+    return calls, queued, payloads, timeouts, run
+
+
+async def test_poll_new_reads_failing_keep_zones_plan_and_settings(monkeypatch):
+    async def boom_device(client, sn, model=""):
+        raise RuntimeError("device boom")
+
+    async def boom_fault(client, sn, vt):
+        raise RuntimeError("fault boom")
+
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_device=boom_device, fetch_fault=boom_fault)
+    await run(1)
+    assert {"navimow/D1/zones", "navimow/D1/schedule", "navimow/D1/settings"} <= set(queued)
+    assert "navimow/D1/fault" not in queued
+    assert "D1" not in gw._unofficial_device and "D1" not in gw._unofficial_fault
+    assert timeouts == [1800]                       # kein Backoff
+
+
+async def test_poll_does_not_cache_empty_device_and_passes_official_model(monkeypatch):
+    async def empty_device(client, sn, model=""):
+        models.append(model)
+        return {"model": model, "cut_height_options": [], "cut_height_flag": False, "limits": {}}, False
+
+    models = []
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_device=empty_device)
+    gw._official_model["D1"] = "i215"
+    await run(2)
+    assert models == ["i215", "i215"] and "D1" not in gw._unofficial_device
+
+
+async def test_poll_fills_in_model_from_official_api_later(monkeypatch):
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch)
+    gw._unofficial_device["D1"] = {"model": "", "cut_height_options": [], "cut_height_flag": True, "limits": {}}
+    gw._official_model["D1"] = "i215"
+    await run(1)
+    assert gw._unofficial_device["D1"]["model"] == "i215"
+    assert payloads["navimow/D1/settings"]["cut_height_writable"] == 1
+
+
+async def test_poll_cut_height_not_writable_without_reported_height(monkeypatch):
+    async def settings_no_height(client, sn, zones):
+        return {"sound": True}, {}
+
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_settings_and_schedule=settings_no_height)
+    gw._official_model["D1"] = "i215"
+    await run(1)
+    assert payloads["navimow/D1/settings"]["cut_height_writable"] == 0
+
+
+async def test_poll_active_fault_uses_120s_and_fault_rounds_read_only_the_fault(monkeypatch):
+    async def active_fault(client, sn, vt):
+        calls.append("fault")
+        return {**OK_FAULT, "active": True, "codes": ["6004"], "text": "x"}
+
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_fault=active_fault)
+    await run(3)
+    assert timeouts == [120, 120, 120]
+    assert calls.count("zones") == 1 and calls.count("settings") == 1 and calls.count("fault") == 3
+    assert queued.count("navimow/D1/fault") == 3 and queued.count("navimow/D1/zones") == 1
+
+
+async def test_update_state_sets_refresh_only_on_error_transitions():
+    gw._update_state("D1", {"vehicleState_desc": "docked"})
+    assert not gw._unofficial_refresh.is_set()
+    gw._update_state("D1", {"vehicleState_desc": "mowing"})
+    assert not gw._unofficial_refresh.is_set()
+    gw._update_state("D1", {"vehicleState_desc": "error"})
+    assert gw._unofficial_refresh.is_set()
+    gw._unofficial_refresh.clear()
+    gw._update_state("D1", {"vehicleState_desc": "docked"})
+    assert gw._unofficial_refresh.is_set()
 
 
 DEVICE = {"model": "i215", "cut_height_options": [30, 40, 50], "cut_height_flag": True, "limits": {}}

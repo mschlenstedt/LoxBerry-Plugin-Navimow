@@ -38,3 +38,23 @@ def test_parse_fault_all_clear():
     f = fl.parse_fault({"vehicle_state": "0101"}, {})
     assert f == {"active": False, "codes": [], "text": "", "state_code": "0101", "state_text": "In der Station"}
     assert fl.fault_payload(f) == {"active": 0, "codes": "", "text": "", "state_code": "0101", "state_text": "In der Station"}
+
+
+def test_charging_states_are_known():
+    assert not fl.needs_fault_detail({"vehicle_state": "0202"})
+    assert not fl.needs_fault_detail({"vehicle_state": "0221"})
+    assert fl.parse_fault({"vehicle_state": "0202"}, {})["state_text"] == "Lädt in der Station"
+    assert fl.parse_fault({"vehicle_state": "0221"}, {})["state_text"] == "Rückfahrt pausiert"
+
+
+def test_collect_codes_ignores_zero():
+    out = []
+    fl.collect_codes({"errorCode": 0, "list": [{"code": "0"}, {"code": "0000"}, {"code": "00"}, {"code": "6004"}]}, out)
+    assert out == ["6004"]
+    assert fl.parse_fault({"vehicle_state": "0101"}, {"errorCode": 0})["active"] is False
+
+
+def test_resume_hint_only_for_navigation_codes():
+    assert "STOP" in fl.parse_fault({"vehicle_state": "0310"}, {"errorCode": "6004"})["text"]
+    f = fl.parse_fault({"vehicle_state": "0310"}, {"errorCode": "1024"})
+    assert f["text"] == "Akku zu heiß"

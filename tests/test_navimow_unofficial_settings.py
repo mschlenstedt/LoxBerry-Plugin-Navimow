@@ -52,6 +52,7 @@ CURRENT = {"sound": True, "schedule_enabled": True, "traction_control": False, "
 DEVICE = {"model": "i215", "cut_height_options": [30, 40, 50, 60, 70], "cut_height_flag": True,
           "limits": {"return_battery_level": (10, 20), "charging_limit": (70, 100)}}
 DEVICE_I1 = {"model": "i105", "cut_height_options": [20, 30, 40, 50, 60], "cut_height_flag": False, "limits": {}}
+DEVICE_NO_MODEL = {"model": "", "cut_height_options": [], "cut_height_flag": True, "limits": {}}
 DEVICE_X3 = {"model": "X315", "cut_height_options": [], "cut_height_flag": True, "limits": {}}
 
 
@@ -62,7 +63,9 @@ def test_parse_device_reads_capabilities():
     assert st.parse_device(info) == {"model": "i215", "cut_height_options": [30, 40], "cut_height_flag": True,
                                      "limits": {"return_battery_level": (10, 20)}}
     assert st.parse_device(None, "i105")["model"] == "i105"
-    assert st.parse_device({"mowingHeightList": "30,40"})["cut_height_options"] == []
+    assert st.parse_device({"mowingHeightList": "30,40"})["cut_height_options"] == [30, 40]
+    assert st.parse_device({"mowingHeightList": "50; 40 30"})["cut_height_options"] == [30, 40, 50]
+    assert st.parse_device({"mowingHeightList": [{"height": 30}, {"value": "40"}, {"x": 1}]})["cut_height_options"] == [30, 40]
 
 
 def test_model_family_rules():
@@ -72,6 +75,15 @@ def test_model_family_rules():
     assert st.cut_height_writable({"model": "H500", "cut_height_options": [20, 30], "cut_height_flag": False, "limits": {}})
     assert not st.cut_height_writable({"model": "H500", "cut_height_options": [20], "cut_height_flag": False, "limits": {}})
     assert not st.cut_height_writable(None)
+
+
+def test_cut_height_needs_model_and_reported_height():
+    no_model = {"model": "", "cut_height_flag": True, "cut_height_options": [30, 40], "limits": {}}
+    assert not st.cut_height_writable(no_model)
+    assert st.device_payload(no_model)["cut_height_writable"] == 0
+    assert st.device_payload(DEVICE, {"cut_height_mm": 60})["cut_height_writable"] == 1
+    assert st.device_payload(DEVICE, {"sound": True})["cut_height_writable"] == 0
+    assert st.device_payload(DEVICE)["cut_height_writable"] == 1
 
 
 def test_device_payload():
@@ -120,6 +132,12 @@ def test_build_setting_cut_height_without_list_uses_default_range():
     ({"key": "cut_height_mm", "value": 50}, CURRENT, None, "noch nicht gelesen"),
     ({"key": "cut_height_mm", "value": 55}, CURRENT, DEVICE, "30, 40, 50, 60, 70"),
     ({"key": "charging_limit", "value": 80}, CURRENT, DEVICE_X3, "hat dieses Modell nicht"),
+    ({"key": "cut_height_mm", "value": 50}, CURRENT, DEVICE_NO_MODEL, "nicht bekannt"),
+    ({"key": "charging_limit", "value": 80}, CURRENT, DEVICE_NO_MODEL, "nicht bekannt"),
+    ({"key": "charging_limit", "value": 80}, CURRENT, None, "noch nicht gelesen"),
+    ({"key": "return_battery_level", "value": "nan"}, CURRENT, None, "eine Zahl wird erwartet"),
+    ({"key": "return_battery_level", "value": "inf"}, CURRENT, None, "eine Zahl wird erwartet"),
+    ({"key": "return_battery_level", "value": float("-inf")}, CURRENT, None, "eine Zahl wird erwartet"),
 ])
 def test_build_setting_refuses(payload, current, device, needle):
     with pytest.raises(st.SettingError) as err:

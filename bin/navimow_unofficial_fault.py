@@ -14,10 +14,11 @@ from typing import Any
 from navimow_unofficial_settings import find
 
 # Zustandscode: erstes Byte Familie (01 Station, 02 unterwegs, 03 gestoppt mit Fehler).
-KNOWN_STATES = frozenset({"0101", "0102", "0210", "0211", "0220"})
+KNOWN_STATES = frozenset({"0101", "0102", "0202", "0210", "0211", "0220", "0221"})
 STATE_TEXT = {
     "0101": "In der Station", "0102": "In der Station (fertig)", "0210": "Mäht",
     "0211": "Pausiert", "0220": "Fährt zur Station",
+    "0202": "Lädt in der Station", "0221": "Rückfahrt pausiert",
 }
 FAMILY_TEXT = {"01": "In der Station", "02": "Unterwegs", "03": "Gestoppt (Fehler)"}
 FAULT_FAMILY = "03"
@@ -95,7 +96,7 @@ def collect_codes(obj: Any, out: list, depth: int = 0) -> None:
         for key, value in obj.items():
             if isinstance(value, (str, int)) and not isinstance(value, bool) and _CODE_KEY.fullmatch(str(key)):
                 code = str(value).strip()
-                if code and code not in out:
+                if code and not (code.isdigit() and int(code) == 0) and code not in out:   # 0 = kein Fehler
                     out.append(code)
             else:
                 collect_codes(value, out, depth + 1)
@@ -113,7 +114,7 @@ def parse_fault(index2: Any, errors: Any) -> dict:
     active = bool(codes) or code[:2] == FAULT_FAMILY
     if codes:
         text = "; ".join(ERROR_CODES.get(c, f"Fehler {c}") for c in codes[:3])
-        if any(c in ERROR_CODES for c in codes):
+        if any(c in ERROR_CODES and c.startswith("6") for c in codes):   # nur Navigation/Feststecken/Anheben
             text = f"{text} ({RESUME_HINT})"
     elif active:
         text = "Gestoppt mit Fehler, der Mäher nennt keinen Code"
