@@ -177,3 +177,43 @@ async def test_poll_isolates_failures_and_backs_off(monkeypatch):
     await gw.task_unofficial_poll(cfg, object(), "navimow", shutdown)
     assert "navimow/G/zones" in queued and "G" in gw._unofficial_schedule
     assert timeouts == [60, 120, 240]
+
+
+DEVICE = {"model": "i215", "cut_height_options": [30, 40, 50], "cut_height_flag": True, "limits": {}}
+
+
+async def test_setting_writes_and_triggers_refresh():
+    gw._unofficial_settings["D1"] = {"sound": True, "cut_height_mm": 40}
+    gw._unofficial_device["D1"] = DEVICE
+    gw._unofficial_refresh.clear()
+    calls = []
+
+    class Client(FakeClient):
+        async def write_setting(self, sn, vt, write):
+            calls.append((sn, vt, write.robot, write.cloud, write.iot))
+
+    mqtt = FakeMqtt()
+    await gw._handle_unofficial_command(mqtt, _msg({"cmd": "setting", "key": "sound", "value": "aus"}), "D1", "navimow", CFG, Client())
+    await gw._handle_unofficial_command(mqtt, _msg({"cmd": "setting", "key": "cut_height_mm", "value": 50}), "D1", "navimow", CFG, Client())
+    assert calls == [("SN1", 160000001, {"soundSwitch": 0}, {"soundSwitch": "0"}, True),
+                     ("SN1", 160000001, {"height": "50"}, {"height": 50}, True)]
+    assert mqtt.results[-1]["result"] == "ok" and gw._unofficial_refresh.is_set()
+
+
+async def test_setting_refused_before_settings_are_read():
+    gw._unofficial_settings.pop("D1", None)
+    mqtt = FakeMqtt()
+    await gw._handle_unofficial_command(mqtt, _msg({"cmd": "setting", "key": "sound", "value": 1}), "D1", "navimow", CFG, FakeClient())
+    assert mqtt.results[-1]["result"] == "error" and "noch nicht gelesen" in mqtt.results[-1]["reason"]
+
+
+async def test_setting_refused_while_mowing_explains():
+    gw._unofficial_settings["D1"] = {"sound": True}
+
+    class Client(FakeClient):
+        async def write_setting(self, sn, vt, write):
+            raise NavimowError(5001, "running")
+
+    mqtt = FakeMqtt()
+    await gw._handle_unofficial_command(mqtt, _msg({"cmd": "setting", "key": "sound", "value": 0}), "D1", "navimow", CFG, Client())
+    assert "mäht" in mqtt.results[-1]["reason"]

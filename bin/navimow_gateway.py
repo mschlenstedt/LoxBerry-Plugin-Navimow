@@ -1032,7 +1032,7 @@ async def _publish_command_result(lbmqtt, base_topic, device_id, cmd, ok, reason
 
 
 # ── Task 8: LoxBerry MQTT → Navimow commands ─────────────────────────────────
-_UNOFFICIAL_COMMANDS = {"pause", "dock", "resume", "mow", "schedule"}
+_UNOFFICIAL_COMMANDS = {"pause", "dock", "resume", "mow", "schedule", "setting"}
 # Starke Referenzen auf laufende Tasks inoffizieller Befehle (sonst GC-gefährdet).
 _unofficial_tasks: set = set()
 
@@ -1102,7 +1102,7 @@ async def task_mqtt_to_navimow(
 
 def _unofficial_error_text(err: Exception, cmd: str = "") -> str:
     code = str(getattr(err, "code", ""))
-    if code == "5001" and cmd in ("schedule", "mow"):
+    if code == "5001" and cmd in ("schedule", "mow", "setting"):
         desc = getattr(err, "desc", "") or ""
         return ("Der Mäher lehnt das ab, solange er mäht. Erst pausieren oder andocken. "
                 f"(5001: {desc})")
@@ -1110,7 +1110,7 @@ def _unofficial_error_text(err: Exception, cmd: str = "") -> str:
 
 
 async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plugin_cfg, unofficial_client) -> None:
-    """Befehle der inoffiziellen API: pause, dock, resume, mow, schedule."""
+    """Befehle der inoffiziellen API: pause, dock, resume, mow, schedule, setting."""
     try:
         payload = json.loads(message.payload.decode("utf-8", errors="replace"))
         cmd = str(payload.get("cmd", "")).strip().lower()
@@ -1146,7 +1146,7 @@ async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plu
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
                                        "no vehicle_sn mapping for this device", source="unofficial")
         return
-    schedule_validated = False
+    refresh_after = False
     try:
         vehicle_type = int(mapping.get("vehicle_type") or 0)
         known = _unofficial_known_zone_ids(device_id)
@@ -1157,13 +1157,18 @@ async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plu
             weekday = navimow_unofficial_plan.WEEKDAYS[navimow_unofficial_plan.parse_day(payload.get("day")) - 1]
             current_day = (_unofficial_schedule.get(device_id) or {}).get(weekday)
             day, enabled, periods = navimow_unofficial_plan.build_schedule(payload, known, current_day)
-            schedule_validated = True
+            refresh_after = True
             await unofficial_client.set_day_schedule(sn, vehicle_type, day, enabled, periods)
+        elif cmd == "setting":
+            write = navimow_unofficial_settings.build_setting(
+                payload, _unofficial_settings.get(device_id), _unofficial_device.get(device_id))
+            refresh_after = True
+            await unofficial_client.write_setting(sn, vehicle_type, write)
         else:
             await getattr(unofficial_client, cmd)(sn)
         LOGOK(f"unofficial {cmd}({device_id})")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, True, "ok", source="unofficial")
-    except navimow_unofficial_plan.PlanError as e:
+    except (navimow_unofficial_plan.PlanError, navimow_unofficial_settings.SettingError) as e:
         LOGWARN(f"unofficial {cmd}({device_id}) refused: {e}")
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False, str(e), source="unofficial")
     except Exception as e:
@@ -1171,7 +1176,7 @@ async def _handle_unofficial_command(lbmqtt, message, device_id, base_topic, plu
         await _publish_command_result(lbmqtt, base_topic, device_id, cmd, False,
                                        _unofficial_error_text(e, cmd), source="unofficial")
     finally:
-        if schedule_validated:
+        if refresh_after:
             _unofficial_refresh.set()
 
 
