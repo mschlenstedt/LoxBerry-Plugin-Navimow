@@ -607,8 +607,8 @@ _activity_refresh_due: bool = False
 def _update_state(device_id: str, updates: dict) -> None:
     new_desc = updates.get("vehicleState_desc")
     old_desc = (_device_state.get(device_id) or {}).get("vehicleState_desc")
-    if new_desc is not None and new_desc != old_desc and "error" in (new_desc, old_desc):
-        _unofficial_refresh.set()   # Fehlerdetails sofort über die inoffizielle API nachlesen
+    if new_desc is not None and new_desc != old_desc and {"error", "mowing"} & {new_desc, old_desc}:
+        _unofficial_refresh.set()   # Fehler bzw. Mähbeginn/-ende: sofort über die inoffizielle API nachlesen
     if device_id not in _device_state:
         _device_state[device_id] = {}
     _device_state[device_id].update(
@@ -1295,7 +1295,7 @@ _unofficial_settings: dict = {}      # device_id -> zuletzt gelesene Einstellung
 _unofficial_device: dict = {}        # device_id -> Fähigkeiten aus get-device-info (parse_device), einmal je Lauf
 _unofficial_fault: dict = {}         # device_id -> letzter Fehlerzustand (parse_fault)
 _official_model: dict = {}           # device_id -> Modell aus der offiziellen Geräteliste, nur RAM
-_UNOFFICIAL_FAULT_POLL = 120         # solange ein Fehler aktiv ist: so oft nachsehen, ob er behoben ist
+_UNOFFICIAL_FAST_POLL = 120          # solange ein Fehler aktiv ist oder der Mäher mäht: Fehler und Abdeckung so oft lesen
 _UNOFFICIAL_POLL_BACKOFF = 60        # nach einer Runde mit Lesefehler, verdoppelt bis _UNOFFICIAL_POLL_INTERVAL
 
 
@@ -1306,7 +1306,7 @@ def _unofficial_known_zone_ids(device_id: str) -> list:
 
 async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: str,
                                shutdown: asyncio.Event) -> None:
-    """Liest Zonen, Wochenplan, Einstellungen, Fähigkeiten und Fehlerzustand jedes zugeordneten Mähers und veröffentlicht sie retained."""
+    """Liest Zonen, Wochenplan, Einstellungen, Fähigkeiten, Fehlerzustand und Abdeckung jedes zugeordneten Mähers und veröffentlicht sie retained."""
     if unofficial_client is None:
         return
     import navimow_unofficial_snapshot as snapshot
@@ -1363,24 +1363,35 @@ async def task_unofficial_poll(plugin_cfg: dict, unofficial_client, base_topic: 
                 fault = await snapshot.fetch_fault(unofficial_client, sn, vt)
             except Exception as e:
                 LOGWARN(f"Unofficial fault state for {did} failed: {e}")
-                continue
-            _queue_retained(f"{base_topic}/{did}/fault", {**navimow_unofficial_fault.fault_payload(fault), "ts": now})
-            _unofficial_fault[did] = fault
-            LOGINF(f"Unofficial fault state for {did}: active={fault['active']}")
+            else:
+                _queue_retained(f"{base_topic}/{did}/fault", {**navimow_unofficial_fault.fault_payload(fault), "ts": now})
+                _unofficial_fault[did] = fault
+                LOGINF(f"Unofficial fault state for {did}: active={fault['active']}")
+            try:
+                cache = _unofficial_zone_cache.get(did)
+                coverage = await snapshot.fetch_coverage(unofficial_client, sn, cache.zones if cache else [])
+            except Exception as e:
+                LOGWARN(f"Unofficial coverage for {did} failed: {e}")
+                coverage = None
+            if coverage:
+                _queue_retained(f"{base_topic}/{did}/coverage",
+                                {**navimow_unofficial_plan.coverage_payload(coverage), "ts": now})
+                LOGDEB(f"Unofficial coverage for {did}: {coverage['overall_pct']} %")
         if full:
             last_full = time.monotonic()
             if failed:
                 wait = _UNOFFICIAL_POLL_BACKOFF if wait >= _UNOFFICIAL_POLL_INTERVAL else min(wait * 2, _UNOFFICIAL_POLL_INTERVAL)
             else:
                 wait = _UNOFFICIAL_POLL_INTERVAL
-        fault_seen = any((_unofficial_fault.get(m.get("device_id")) or {}).get("active")
-                         for m in plugin_cfg.get("unofficial_devices", []))
-        effective = min(wait, _UNOFFICIAL_FAULT_POLL) if fault_seen else wait
+        fast = any((_unofficial_fault.get(m.get("device_id")) or {}).get("active")
+                   or (_device_state.get(m.get("device_id")) or {}).get("vehicleState_desc") == "mowing"
+                   for m in plugin_cfg.get("unofficial_devices", []))
+        effective = min(wait, _UNOFFICIAL_FAST_POLL) if fast else wait
         try:
             await asyncio.wait_for(_unofficial_refresh.wait(), timeout=effective)
             full = True
         except asyncio.TimeoutError:
-            # Nur der Fehlertakt abgelaufen: dann nur den Fehlerzustand lesen.
+            # Nur der kurze Takt abgelaufen: dann nur Fehlerzustand und Abdeckung lesen.
             full = effective >= wait or time.monotonic() - last_full >= wait
 
 

@@ -217,6 +217,12 @@ def _poll_env(monkeypatch, **overrides):
         calls.append("fault")
         return dict(OK_FAULT)
 
+    async def fetch_coverage(client, sn, zones):
+        calls.append("coverage")
+        return {"overall_pct": 50, "total_area": 10.0, "finished_area": 5.0, "start": 1, "end": 2,
+                "zones": [{"id": 1, "name": "Z", "area": 10.0, "finished": 5.0, "pct": 50, "start": 1, "end": 2}]}
+
+    snap.fetch_coverage = fetch_coverage
     snap.fetch_zones, snap.fetch_settings_and_schedule = fetch_zones, fetch_settings_and_schedule
     snap.fetch_device, snap.fetch_fault = fetch_device, fetch_fault
     for k, v in overrides.items():
@@ -302,16 +308,49 @@ async def test_poll_active_fault_uses_120s_and_fault_rounds_read_only_the_fault(
     assert queued.count("navimow/D1/fault") == 3 and queued.count("navimow/D1/zones") == 1
 
 
-async def test_update_state_sets_refresh_only_on_error_transitions():
+async def test_update_state_sets_refresh_on_error_and_mowing_transitions():
     gw._update_state("D1", {"vehicleState_desc": "docked"})
     assert not gw._unofficial_refresh.is_set()
-    gw._update_state("D1", {"vehicleState_desc": "mowing"})
+    gw._update_state("D1", {"vehicleState_desc": "returning"})
     assert not gw._unofficial_refresh.is_set()
-    gw._update_state("D1", {"vehicleState_desc": "error"})
-    assert gw._unofficial_refresh.is_set()
-    gw._unofficial_refresh.clear()
-    gw._update_state("D1", {"vehicleState_desc": "docked"})
-    assert gw._unofficial_refresh.is_set()
+    for desc in ("mowing", "paused", "error", "docked"):
+        gw._update_state("D1", {"vehicleState_desc": desc})
+        assert gw._unofficial_refresh.is_set(), desc
+        gw._unofficial_refresh.clear()
+    gw._update_state("D1", {"vehicleState_desc": "docked", "battery": 50})
+    assert not gw._unofficial_refresh.is_set()
+
+
+async def test_poll_publishes_coverage_every_round(monkeypatch):
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch)
+    await run(1)
+    p = payloads["navimow/D1/coverage"]
+    assert p["zone_1_pct"] == 50 and p["count"] == 1 and "ts" in p
+
+
+async def test_poll_while_mowing_uses_120s_and_reads_coverage_in_short_rounds(monkeypatch):
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch)
+    gw._device_state["D1"] = {"vehicleState_desc": "mowing"}
+    await run(3)
+    assert timeouts == [120, 120, 120]
+    assert calls.count("zones") == 1 and calls.count("coverage") == 3 and calls.count("fault") == 3
+
+
+async def test_poll_coverage_failure_or_empty_keeps_rest(monkeypatch):
+    async def boom(client, sn, zones):
+        raise RuntimeError("coverage boom")
+
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_coverage=boom)
+    await run(1)
+    assert "navimow/D1/coverage" not in queued and "navimow/D1/fault" in queued
+    assert timeouts == [1800]
+
+    async def empty(client, sn, zones):
+        return None
+
+    calls, queued, payloads, timeouts, run = _poll_env(monkeypatch, fetch_coverage=empty)
+    await run(1)
+    assert "navimow/D1/coverage" not in queued
 
 
 DEVICE = {"model": "i215", "cut_height_options": [30, 40, 50], "cut_height_flag": True, "limits": {}}

@@ -79,6 +79,11 @@
       <td>active (1/0), codes, text (Klartext), state_code, state_text, ts &mdash; bei einem Fehler alle 2 Minuten aktualisiert; nur mit inoffizieller Anmeldung</td>
     </tr>
     <tr>
+      <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/&lt;device_id&gt;/coverage</td>
+      <td>OUT</td><td>&#10003;</td>
+      <td>Abdeckung des laufenden bzw. letzten Mähauftrags: overall_pct, total_area, finished_area (m²), start, end (Unix-Zeit), count, text, zone_&lt;id&gt;_pct, list (id, name, area, finished, pct, start, end), ts &mdash; beim Mähen alle 2 Minuten; nur mit inoffizieller Anmeldung</td>
+    </tr>
+    <tr>
       <td style="font-family:monospace;white-space:nowrap;"><TMPL_VAR BASE_TOPIC>/gateway_unofficial</td>
       <td>OUT</td><td>&#10003;</td>
       <td>state, enabled, authenticated, error, since, ts</td>
