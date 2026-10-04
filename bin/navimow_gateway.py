@@ -30,16 +30,19 @@ _ap = argparse.ArgumentParser(add_help=False)
 _ap.add_argument("--logfile",   default="")
 _ap.add_argument("--logdbkey",  default="")
 _ap.add_argument("--configdir", default="")
-_ap.add_argument("--lbsconfig", default="/opt/loxberry/config/system")
+_ap.add_argument("--lbsconfig", default="")
 # Fallback 7 wie LoxBerry::Log, wenn in der Plugin-Datenbank kein Level steht.
 # Im Normalbetrieb übergeben daemon.sh und ajax.cgi den dort eingestellten Wert.
 _ap.add_argument("--loglevel",  type=int, default=7)
 _args, _ = _ap.parse_known_args()
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-LBHOMEDIR    = os.environ.get("LBHOMEDIR", "/opt/loxberry")
-LBSCONFIG    = Path(_args.lbsconfig)
-CONFIGDIR    = Path(_args.configdir) if _args.configdir else Path(LBHOMEDIR) / "config/plugins/navimow"
+# Installiert liegt das Skript unter <LBHOMEDIR>/bin/plugins/<Pluginordner>/ — daraus beides ableiten,
+# falls die Umgebung LBHOMEDIR nicht setzt (der Pluginordner ist dynamisch).
+_SCRIPT      = Path(__file__).resolve()
+LBHOMEDIR    = os.environ.get("LBHOMEDIR") or str(_SCRIPT.parents[3])
+LBSCONFIG    = Path(_args.lbsconfig or os.environ.get("LBSCONFIG") or Path(LBHOMEDIR) / "config/system")
+CONFIGDIR    = Path(_args.configdir) if _args.configdir else Path(LBHOMEDIR) / "config/plugins" / _SCRIPT.parent.name
 GENERAL_JSON = LBSCONFIG / "general.json"
 PLUGIN_CFG   = CONFIGDIR / "pluginconfig.json"
 PID_FILE     = Path("/dev/shm/navimow_gateway.pid")

@@ -5,10 +5,10 @@ Connects to all REST and WSS-MQTT endpoints and prints every response/message
 in full so field shapes can be discovered during mowing, pausing, docking, etc.
 
 Usage (on LoxBerry):
-  python3 /opt/loxberry/bin/plugins/navimow/navimow_probe.py
+  python3 $LBHOMEDIR/bin/plugins/navimow/navimow_probe.py
 
 Optional flags:
-  --configdir /opt/loxberry/config/plugins/navimow   (default)
+  --configdir $LBHOMEDIR/config/plugins/navimow     (default)
   --logfile   /tmp/navimow_probe.log                 (default, also prints to stdout)
 
 Stop with Ctrl+C.
@@ -31,7 +31,10 @@ import requests
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DEFAULT_CONFIG_DIR = "/opt/loxberry/config/plugins/navimow"
+# <LBHOMEDIR>/bin/plugins/<Pluginordner>/navimow_probe.py -> <LBHOMEDIR>/config/plugins/<Pluginordner>
+_SCRIPT            = os.path.realpath(__file__)
+DEFAULT_CONFIG_DIR = os.path.join(os.environ.get("LBHOMEDIR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_SCRIPT)))),
+                                  "config", "plugins", os.path.basename(os.path.dirname(_SCRIPT)))
 CONFIG_FILE        = "pluginconfig.json"
 API_BASE           = "https://navimow-fra.ninebot.com"
 TOKEN_URL          = f"{API_BASE}/openapi/oauth/getAccessToken"

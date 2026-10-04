@@ -71,12 +71,12 @@ Ohne Plugin-Upgrade, direkt auf einem LoxBerry (`<loxberry>`):
 scp bin/navimow_gateway.py loxberry@<loxberry>:/tmp/navimow_gateway.py.new
 ssh loxberry@<loxberry> '
   python3 -m py_compile /tmp/navimow_gateway.py.new || exit 1
-  install -m 755 /tmp/navimow_gateway.py.new /opt/loxberry/bin/plugins/navimow/navimow_gateway.py
+  install -m 755 /tmp/navimow_gateway.py.new $LBHOMEDIR/bin/plugins/navimow/navimow_gateway.py
   PID=$(cat /dev/shm/navimow_gateway.pid); kill "$PID"; sleep 4; rm -f /dev/shm/navimow_gateway.pid
-  setsid python3 /opt/loxberry/bin/plugins/navimow/navimow_gateway.py \
-      --logfile /opt/loxberry/log/plugins/navimow/navimow_gateway.log \
-      --logdbkey 0 --configdir /opt/loxberry/config/plugins/navimow \
-      --lbsconfig /opt/loxberry/config/system --loglevel 7 </dev/null >/dev/null 2>&1 &'
+  setsid python3 $LBHOMEDIR/bin/plugins/navimow/navimow_gateway.py \
+      --logfile $LBHOMEDIR/log/plugins/navimow/navimow_gateway.log \
+      --logdbkey 0 --configdir $LBHOMEDIR/config/plugins/navimow \
+      --lbsconfig $LBHOMEDIR/config/system --loglevel 7 </dev/null >/dev/null 2>&1 &'
 ```
 
 - **`setsid` mit umgeleitetem stdio ist Pflicht**, sonst hängt die SSH-Sitzung bis zum Timeout, weil der Python-Prozess ihre Deskriptoren erbt.
