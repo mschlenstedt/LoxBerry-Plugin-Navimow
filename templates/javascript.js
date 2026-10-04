@@ -76,7 +76,6 @@ const L = {
     SH_MAP:          '<TMPL_VAR "UNOFFICIAL.SHORT_MAP" ESCAPE=JS>',
     SH_ERROR:        '<TMPL_VAR "UNOFFICIAL.SHORT_ERROR" ESCAPE=JS>',
     SH_STARTING:     '<TMPL_VAR "UNOFFICIAL.SHORT_STARTING" ESCAPE=JS>',
-    OK_CONNECTED:    '<TMPL_VAR "UNOFFICIAL.OK_CONNECTED" ESCAPE=JS>',
     LBL_SINCE:       '<TMPL_VAR "UNOFFICIAL.LABEL_SINCE" ESCAPE=JS>',
     LBL_TOPIC:       '<TMPL_VAR "UNOFFICIAL.LABEL_TOPIC" ESCAPE=JS>',
     LBL_MOWER:       '<TMPL_VAR "UNOFFICIAL.LABEL_MOWER" ESCAPE=JS>',
@@ -234,8 +233,7 @@ function renderUnofficial() {
     if (view === 'connected') {
         const base = u.base_topic || root.dataset.base || 'navimow';
         const dev = (u.mapping && u.mapping[0] && u.mapping[0].device_id) || '&lt;device_id&gt;';
-        html = notice + '<div class="nm-note ok"><b class="nm-ico">✓</b><span>' + esc(L.OK_CONNECTED) + '</span></div>' +
-            '<div class="nm-note warn"><b class="nm-ico">!</b><span>' + esc(L.WARN_APP) + '</span></div>' +
+        html = notice + '<p class="nm-hint">' + esc(L.HINT) + ' ' + esc(L.WARN_APP) + '</p>' +
             '<dl class="nm-kv"><dt>' + esc(L.LBL_SINCE) + '</dt><dd>' + esc(fmtSince(u.since)) + '</dd>' +
             '<dt>' + esc(L.LBL_ZONES) + '</dt><dd>' + esc(u.zones_text || L.ZONES_NONE) + '</dd>' +
             '<dt>' + esc(L.LBL_TOPIC) + '</dt><dd class="nm-mono">' + esc(base) + '/' + (dev === '&lt;device_id&gt;' ? dev : esc(dev)) + '/set_app</dd></dl>';
@@ -258,8 +256,7 @@ function renderUnofficial() {
     } else {
         const errText = S.err || (u.error ? L.ERR_SESSION + ' ' + u.error : '');
         const dis = S.busy ? ' disabled' : '';
-        html = notice + '<p class="nm-hint">' + esc(L.HINT) + '</p>' +
-            '<div class="nm-note warn"><b class="nm-ico">!</b><span>' + esc(L.WARN_APP) + '</span></div>' +
+        html = notice + '<p class="nm-hint">' + esc(L.HINT) + ' ' + esc(L.WARN_APP) + '</p>' +
             (errText ? '<div class="nm-note err" role="alert"><b class="nm-ico">!</b><span>' + esc(errText) + '</span></div>' : '') +
             '<div class="nm-form">' +
             '<div class="nm-field"><label for="nm_email">' + esc(L.EMAIL) + '</label>' +
@@ -357,7 +354,7 @@ async function login() {
     if (!ok) { S.steps = ['done', 'done', 'fail']; S.err = L.ERR_TIMEOUT; return finish(S.err); }
     if (!u.ok) { S.steps = ['done', 'done', 'fail']; S.err = L.ERR_SESSION + ' ' + u.error; return finish(S.err); }
     S.steps = ['pending', 'pending', 'pending'];
-    finish(L.OK_CONNECTED);
+    finish(L.ST_CONNECTED);
 }
 
 async function logout() {
