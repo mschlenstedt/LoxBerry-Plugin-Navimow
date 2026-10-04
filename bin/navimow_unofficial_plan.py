@@ -331,3 +331,57 @@ def parse_schedule(set_list: Any, zone_names: dict) -> dict:
             )
         out[WEEKDAYS[day - 1]] = {"enabled": enabled, "periods": periods, "text": text}
     return out
+
+
+def _as_whole(value: Any) -> int | None:
+    """Ganze Zahl auch aus "45.0" oder 45.0; None bei Unsinn."""
+    number = _as_float(value)
+    return None if number is None else int(number)
+
+
+def parse_coverage(raw: Any, zone_names: dict) -> dict | None:
+    """Abdeckung je Zone aus get-path-info-time (laufender bzw. letzter Mähauftrag, auch in der Station)."""
+    if not isinstance(raw, list):
+        return None
+    zones: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        zid = _as_whole(item.get("partitionId"))
+        if zid is None:
+            continue
+        pct = _as_whole(item.get("partitionPercentage"))
+        zones.append({
+            "id": zid,
+            "name": zone_names.get(zid) or f"Zone {zid}",
+            "area": _as_float(item.get("area")),
+            "finished": _as_float(item.get("finishedArea")),
+            "pct": None if pct is None else max(0, min(100, pct)),
+            "start": _as_whole(item.get("startTime")),
+            "end": _as_whole(item.get("endTime")),
+        })
+    if not zones:
+        return None
+    total = sum(z["area"] for z in zones if z["area"] is not None)
+    done = sum(z["finished"] for z in zones if z["finished"] is not None)
+    starts = [z["start"] for z in zones if z["start"]]
+    ends = [z["end"] for z in zones if z["end"]]
+    return {
+        "overall_pct": min(100, round(100 * done / total)) if total > 0 else None,
+        "total_area": round(total, 2),
+        "finished_area": round(done, 2),
+        "start": min(starts) if starts else None,
+        "end": max(ends) if ends else None,
+        "zones": zones,
+    }
+
+
+def coverage_payload(coverage: dict) -> dict:
+    zones = coverage["zones"]
+    out = {key: value for key, value in coverage.items() if key != "zones"}
+    out["count"] = len(zones)
+    out["text"] = ", ".join(z["name"] if z["pct"] is None else f"{z['name']} {z['pct']} %" for z in zones)
+    for z in zones:
+        out[f"zone_{z['id']}_pct"] = z["pct"]
+    out["list"] = zones
+    return out

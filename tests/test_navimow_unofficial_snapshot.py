@@ -115,3 +115,12 @@ async def test_fetch_fault_survives_failing_detail_call():
     f = await snap.fetch_fault(Client({}), "SN1", 1)
     assert f["active"] is True and f["codes"] == []
 
+
+
+async def test_fetch_coverage_uses_zone_names():
+    class Client(FakeClient):
+        async def path_info_time(self, sn):
+            return [{"partitionId": 4, "area": 10, "finishedArea": 5, "partitionPercentage": 50}]
+
+    c = await snap.fetch_coverage(Client({}), "SN1", [{"id": 4, "name": "Beet", "area": None}])
+    assert c["zones"][0]["name"] == "Beet" and c["overall_pct"] == 50

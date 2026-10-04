@@ -284,3 +284,8 @@ class NavimowUnofficialClient:
                 err.code,
                 f"Mäher hat die Einstellung übernommen, die Cloud-Kopie ist fehlgeschlagen – bitte erneut senden ({err.desc})",
             ) from err
+
+    async def path_info_time(self, sn: str) -> list:
+        """Abdeckung je Zone für den laufenden bzw. letzten Mähauftrag (auch in der Station gefüllt)."""
+        data = await self.call("/vehicle/trail/get-path-info-time", {"vehicle_sn": sn})
+        return data if isinstance(data, list) else []

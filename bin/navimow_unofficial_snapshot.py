@@ -51,3 +51,7 @@ async def fetch_fault(client, sn: str, vehicle_type: int) -> dict:
         except NavimowError:
             errors = {}
     return fault_mod.parse_fault(index2, errors)
+
+
+async def fetch_coverage(client, sn: str, zones: list[dict]) -> dict | None:
+    return plan.parse_coverage(await client.path_info_time(sn), {z["id"]: z["name"] for z in zones})

@@ -269,3 +269,37 @@ def test_parse_schedule_non_list_partition_ids():
     parsed = plan.parse_schedule({"plan_v2": [{"day": 2, "open": 1, "period": [
         {"start_time": 36, "end_time": 48, "partition_ids": 5}]}]}, {})
     assert parsed["monday"]["periods"] == [{"start": "09:00", "end": "12:00", "zones": []}]
+
+
+RAW_COVERAGE = [
+    {"area": 40.0, "endTime": 1700003600, "endTimeAlias": 9, "finishedArea": 40.0, "partitionId": 1,
+     "partitionPercentage": 100, "startTime": 1700000000},
+    {"area": 60.0, "endTime": 1700007200, "finishedArea": 27.0, "partitionId": 2,
+     "partitionPercentage": 45, "startTime": 1700003700},
+]
+
+
+def test_parse_coverage_sums_and_names_zones():
+    c = plan.parse_coverage(RAW_COVERAGE, {1: "Vorne", 2: "Hinten"})
+    assert c["overall_pct"] == 67 and c["total_area"] == 100.0 and c["finished_area"] == 67.0
+    assert c["start"] == 1700000000 and c["end"] == 1700007200
+    assert c["zones"][1] == {"id": 2, "name": "Hinten", "area": 60.0, "finished": 27.0, "pct": 45,
+                             "start": 1700003700, "end": 1700007200}
+
+
+def test_parse_coverage_tolerates_odd_input():
+    assert plan.parse_coverage(None, {}) is None
+    assert plan.parse_coverage([], {}) is None
+    assert plan.parse_coverage([{"area": 5}, "x"], {}) is None          # ohne partitionId nichts verwertbar
+    c = plan.parse_coverage([{"partitionId": "7", "partitionPercentage": "130", "area": "nan"}], {})
+    z = c["zones"][0]
+    assert z["name"] == "Zone 7" and z["pct"] == 100 and z["area"] is None
+    assert c["overall_pct"] is None and c["total_area"] == 0 and c["start"] is None
+    assert plan.parse_coverage([{"partitionId": 3, "partitionPercentage": "viel"}], {})["zones"][0]["pct"] is None
+
+
+def test_coverage_payload_flat_keys_for_loxone():
+    p = plan.coverage_payload(plan.parse_coverage(RAW_COVERAGE, {1: "Vorne"}))
+    assert p["count"] == 2 and p["zone_1_pct"] == 100 and p["zone_2_pct"] == 45
+    assert p["text"] == "Vorne 100 %, Zone 2 45 %"
+    assert p["overall_pct"] == 67 and len(p["list"]) == 2 and "zones" not in p

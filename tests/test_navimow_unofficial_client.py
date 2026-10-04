@@ -213,3 +213,12 @@ async def test_write_setting_reports_failed_cloud_copy():
     with pytest.raises(NavimowError) as err:
         await _client(session).write_setting("SN1", 1, _NS(robot={"soundSwitch": 0}, cloud={"soundSwitch": "0"}, iot=True))
     assert "Cloud-Kopie" in str(err.value)
+
+
+async def test_path_info_time_returns_list_or_empty():
+    session = _FakeSession([{"code": 1, "data": [{"partitionId": 1}]}, {"code": 1, "data": {"x": 1}}])
+    c = _client(session)
+    assert await c.path_info_time("SN1") == [{"partitionId": 1}]
+    assert await c.path_info_time("SN1") == []
+    assert session.calls[0][0].endswith("/vehicle/trail/get-path-info-time")
+    assert session.calls[0][1]["vehicle_sn"] == "SN1"
