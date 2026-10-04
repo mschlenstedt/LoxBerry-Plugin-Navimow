@@ -73,7 +73,6 @@ const L = {
     ST_MAP:          '<TMPL_VAR "UNOFFICIAL.STATUS_MAP" ESCAPE=JS>',
     SH_STARTING:     '<TMPL_VAR "UNOFFICIAL.SHORT_STARTING" ESCAPE=JS>',
     LBL_SINCE:       '<TMPL_VAR "UNOFFICIAL.LABEL_SINCE" ESCAPE=JS>',
-    LBL_TOPIC:       '<TMPL_VAR "UNOFFICIAL.LABEL_TOPIC" ESCAPE=JS>',
     LBL_MOWER:       '<TMPL_VAR "UNOFFICIAL.LABEL_MOWER" ESCAPE=JS>',
     LBL_ZONES:       '<TMPL_VAR "UNOFFICIAL.LABEL_ZONES" ESCAPE=JS>',
     ZONES_NONE:      '<TMPL_VAR "UNOFFICIAL.ZONES_NONE" ESCAPE=JS>',
@@ -223,12 +222,9 @@ function renderUnofficial() {
     const notice = S.notice ? '<div class="nm-note ok" role="status"><b class="nm-ico">✓</b><span>' + esc(S.notice) + '</span></div>' : '';
 
     if (view === 'connected') {
-        const base = u.base_topic || root.dataset.base || 'navimow';
-        const dev = (u.mapping && u.mapping[0] && u.mapping[0].device_id) || '&lt;device_id&gt;';
         html = notice + '<p class="nm-hint">' + esc(L.HINT) + ' ' + esc(L.WARN_APP) + '</p>' +
             '<dl class="nm-kv"><dt>' + esc(L.LBL_SINCE) + '</dt><dd>' + esc(fmtSince(u.since)) + '</dd>' +
-            '<dt>' + esc(L.LBL_ZONES) + '</dt><dd>' + esc(u.zones_text || L.ZONES_NONE) + '</dd>' +
-            '<dt>' + esc(L.LBL_TOPIC) + '</dt><dd class="nm-mono">' + esc(base) + '/' + (dev === '&lt;device_id&gt;' ? dev : esc(dev)) + '/set_app</dd></dl>';
+            '<dt>' + esc(L.LBL_ZONES) + '</dt><dd>' + esc(u.zones_text || L.ZONES_NONE) + '</dd></dl>';
         actions = S.confirmLogout
             ? '<span class="nm-desc">' + esc(L.CONFIRM_LOGOUT) + '</span>' + btn('logout-cancel', L.BTN_CANCEL) + btn('logout-confirm', L.BTN_LOGOUT_OK, 'lb-btn-danger')
             : btn('logout', L.BTN_LOGOUT, 'lb-btn-danger', { disabled: S.busy });
