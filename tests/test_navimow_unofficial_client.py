@@ -158,3 +158,58 @@ async def test_set_day_schedule_cloud_copy_failure_is_distinct():
         await _client(session).set_day_schedule("SN1", 160000001, 2, True, [])
     assert exc.value.code == 9999 and "boom" in str(exc.value)
     assert len(session.calls) == 2
+
+
+from types import SimpleNamespace as _NS
+
+
+@pytest.mark.asyncio
+async def test_read_calls_for_device_state_and_faults():
+    session = _FakeSession([{"code": 1, "data": {"model": "i215"}}, {"code": 1, "data": {"vehicle_state": "0101"}},
+                            {"code": 1, "data": "blob"}])
+    c = _client(session)
+    assert await c.device_info("SN1") == {"model": "i215"}
+    assert await c.index2("SN1") == {"vehicle_state": "0101"}
+    assert await c.errors("SN1", 160000001) == "blob"
+    paths = [url.split("navimow-fra.ninebot.com")[1] for url, _ in session.calls]
+    assert paths == ["/vehicle/vehicle/get-device-info", "/vehicle/vehicle/index2",
+                     "/vehicle/vehicle/get-hint-error-compress"]
+    assert session.calls[2][1]["vehicle_type"] == 160000001
+
+
+@pytest.mark.asyncio
+async def test_write_setting_device_first_then_cloud_iot():
+    session = _FakeSession([{"code": 1, "data": {}}, {"code": 1, "data": {}}])
+    w = _NS(robot={"tcsSwitch": 1}, cloud={"tractionControl": 1}, iot=True)
+    await _client(session).write_setting("SN1", 160000001, w)
+    (u1, first), (u2, second) = session.calls
+    assert u1.endswith("/vehicle/set/send") and first["cmdCode"] == "s:mower"
+    assert _json.loads(first["data"]) == {"tcsSwitch": 1}
+    assert u2.endswith("/vehicle/set/save-set-data")
+    assert second["data"] == {"tractionControl": 1}
+    assert second["operation_type"] == "iot_set" and second["vehicle_type"] == "160000001"
+
+
+@pytest.mark.asyncio
+async def test_write_setting_legacy_is_cloud_only_without_iot_fields():
+    session = _FakeSession([{"code": 1, "data": {}}])
+    await _client(session).write_setting("SN1", 160000001, _NS(robot=None, cloud={"rainSensor": "00"}, iot=False))
+    (url, body), = session.calls
+    assert url.endswith("/vehicle/set/save-set-data") and body["data"] == {"rainSensor": "00"}
+    assert "operation_type" not in body and "vehicle_type" not in body
+
+
+@pytest.mark.asyncio
+async def test_write_setting_stops_when_mower_refuses():
+    session = _FakeSession([{"code": 5001, "desc": "running"}])
+    with pytest.raises(NavimowError):
+        await _client(session).write_setting("SN1", 1, _NS(robot={"soundSwitch": 0}, cloud={"soundSwitch": "0"}, iot=True))
+    assert len(session.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_write_setting_reports_failed_cloud_copy():
+    session = _FakeSession([{"code": 1, "data": {}}, {"code": 9999, "desc": "x"}])
+    with pytest.raises(NavimowError) as err:
+        await _client(session).write_setting("SN1", 1, _NS(robot={"soundSwitch": 0}, cloud={"soundSwitch": "0"}, iot=True))
+    assert "Cloud-Kopie" in str(err.value)

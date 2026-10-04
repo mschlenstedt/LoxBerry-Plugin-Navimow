@@ -246,3 +246,41 @@ class NavimowUnofficialClient:
                 "Mäher hat den Plan übernommen, die Cloud-Kopie ist fehlgeschlagen – bitte erneut senden ("
                 + str(getattr(err, "desc", "") or err) + ")",
             ) from err
+
+    async def device_info(self, sn: str) -> dict:
+        return await self.call("/vehicle/vehicle/get-device-info", {"vehicle_sn": sn}) or {}
+
+    async def index2(self, sn: str) -> dict:
+        return await self.call("/vehicle/vehicle/index2", {"vehicle_sn": sn}) or {}
+
+    async def errors(self, sn: str, vehicle_type: int) -> Any:
+        return await self.call("/vehicle/vehicle/get-hint-error-compress",
+                               {"vehicle_sn": sn, "vehicle_type": vehicle_type}) or {}
+
+    async def send_setting_device(self, sn: str, data: dict) -> Any:
+        """Gerätebefehl: erst er lässt den Mäher eine Einstellung übernehmen (die Cloud-Kopie allein wird zurückgesetzt)."""
+        return await self.call(
+            "/vehicle/set/send",
+            {"vehicle_sn": sn, "cmdCode": "s:mower", "data": json.dumps(data, separators=(",", ":"))},
+        )
+
+    async def save_setting(self, sn: str, vehicle_type: int, data: dict, *, iot: bool) -> Any:
+        extra: dict = {"vehicle_sn": sn, "data": data}
+        if iot:
+            extra["vehicle_type"] = str(vehicle_type)
+            extra["operation_type"] = "iot_set"
+        return await self.call("/vehicle/set/save-set-data", extra)
+
+    async def write_setting(self, sn: str, vehicle_type: int, write: Any) -> Any:
+        """Wie die App: Gerät zuerst, dann Cloud-Kopie. Lehnt der Mäher ab, bleibt die Cloud unberührt."""
+        if write.robot is not None:
+            await self.send_setting_device(sn, write.robot)
+        try:
+            return await self.save_setting(sn, vehicle_type, write.cloud, iot=write.iot)
+        except NavimowError as err:
+            if write.robot is None:
+                raise
+            raise NavimowError(
+                err.code,
+                f"Mäher hat die Einstellung übernommen, die Cloud-Kopie ist fehlgeschlagen – bitte erneut senden ({err.desc})",
+            ) from err
