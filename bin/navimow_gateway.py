@@ -1556,7 +1556,26 @@ async def task_loglevel_watch(shutdown: asyncio.Event) -> None:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+def _init_loop_objects() -> None:
+    """Event und Queues in der laufenden Schleife neu anlegen.
+
+    Python 3.9 bindet asyncio.Event()/Queue() schon beim Anlegen an
+    get_event_loop() -- auf Modulebene ist das nicht die Schleife von
+    asyncio.run(), und das erste wait()/get() wirft "attached to a different
+    loop". Ab 3.10 wird erst beim Warten gebunden.
+    """
+    global _shutdown_event, _unofficial_refresh
+    global _state_publish_queue, _location_queue, _event_queue, _retained_queue
+    _shutdown_event      = asyncio.Event()
+    _unofficial_refresh  = asyncio.Event()
+    _state_publish_queue = asyncio.Queue(maxsize=64)
+    _location_queue      = asyncio.Queue(maxsize=64)
+    _event_queue         = asyncio.Queue(maxsize=64)
+    _retained_queue      = asyncio.Queue(maxsize=64)
+
+
 async def main() -> None:
+    _init_loop_objects()
     LOGSTART("Navimow Gateway starting")
     write_pid()
 
