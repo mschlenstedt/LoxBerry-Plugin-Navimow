@@ -24,6 +24,31 @@ cp -p -v -r /tmp/$ARGV1\_upgrade/data/$ARGV3/* $ARGV5/data/plugins/$ARGV3/
 echo "<INFO> Remove temporary folders"
 rm -r /tmp/$ARGV1\_upgrade
 
+# Up to 2.0.1 the gateway published the access token retained in
+# {base_topic}/gateway. Re-publish that message without it, so the token does
+# not linger on the broker — also when the gateway stays stopped below.
+echo "<INFO> Removing access token from retained MQTT status (if present)"
+NAVIMOW_CFG="$ARGV5/config/plugins/$ARGV3/pluginconfig.json" perl -e '
+    use LoxBerry::IO;
+    use JSON;
+    my $base = "navimow";
+    if (open(my $fh, "<", $ENV{NAVIMOW_CFG})) {
+        local $/;
+        my $cfg = eval { decode_json(<$fh>) };
+        $base = $cfg->{base_topic} if ref $cfg eq "HASH" && $cfg->{base_topic};
+    }
+    my $topic = "$base/gateway";
+    my $raw   = LoxBerry::IO::mqtt_get($topic);
+    my $data  = (defined $raw && $raw ne "") ? eval { decode_json($raw) } : undef;
+    if (ref $data eq "HASH" && exists $data->{token}) {
+        delete $data->{token};
+        LoxBerry::IO::mqtt_retain($topic, encode_json($data));
+        print "<OK> Access token removed from $topic\n";
+    } else {
+        print "<INFO> No access token in $topic\n";
+    }
+'
+
 # Restart the gateway unless it was manually stopped via the WebUI.
 # postupgrade.sh runs as the loxberry user (only *root scripts run as root),
 # so the gateway is started as loxberry — owner-consistent with the boot

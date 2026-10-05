@@ -551,7 +551,6 @@ def _update_auth_status(plugin_cfg: dict, base_topic: str) -> None:
         "state":         "running",
         "authenticated": bool(token and expires_at > time.time()),
         "expires_at":    expires_at,
-        "token":         token,
     })
     _auth_dirty = True
 
