@@ -114,6 +114,18 @@ const postJSON = (params) => fetch('ajax.cgi', { method: 'POST', body: new URLSe
 /* ---------- Statusableitungen ---------- */
 function gwRunning() { return !!S.gw.pid && !S.gw.phase; }
 
+// Zuordnung Mäher für Mäher: erst der nächste noch offene, angeboten nur App-Mäher,
+// die noch keinem anderen Gerät gehören.
+function unmappedDevice(u) {
+    const done = new Set((u.mapping || []).map((m) => m.device_id));
+    return (u.devices || []).find((d) => !done.has(d.device_id));
+}
+
+function freeVehicles(u) {
+    const taken = new Set((u.mapping || []).map((m) => m.vehicle_sn));
+    return (u.vehicles || []).filter((v) => !taken.has(v.vehicle_sn));
+}
+
 function unofficialView() {
     const u = S.un || {};
     if (S.flow === 'login') return 'working';
@@ -121,8 +133,7 @@ function unofficialView() {
     if (!u.enabled) return S.err ? 'error' : 'none';
     if (!gwRunning()) return 'gwdown';
     if (u.ok) {
-        const devices = u.devices || [], mapping = u.mapping || [];
-        return (devices.length > 0 && mapping.length < devices.length && (u.vehicles || []).length > 1) ? 'map' : 'connected';
+        return (unmappedDevice(u) && freeVehicles(u).length > 0 && (u.vehicles || []).length > 1) ? 'map' : 'connected';
     }
     if (u.error || S.err) return 'error';
     return 'starting';
@@ -229,8 +240,8 @@ function renderUnofficial() {
             ? '<span class="nm-desc">' + esc(L.CONFIRM_LOGOUT) + '</span>' + btn('logout-cancel', L.BTN_CANCEL) + btn('logout-confirm', L.BTN_LOGOUT_OK, 'lb-btn-danger')
             : btn('logout', L.BTN_LOGOUT, 'lb-btn-danger', { disabled: S.busy });
     } else if (view === 'map') {
-        const dev = (u.devices || [])[0] || {};
-        const opts = (u.vehicles || []).map((v) => '<option value="' + esc(v.vehicle_sn) + '"' + (S.map === v.vehicle_sn ? ' selected' : '') + '>' +
+        const dev = unmappedDevice(u) || {};
+        const opts = freeVehicles(u).map((v) => '<option value="' + esc(v.vehicle_sn) + '"' + (S.map === v.vehicle_sn ? ' selected' : '') + '>' +
             esc((v.name ? v.name + ' · ' : '') + v.vehicle_sn) + '</option>').join('');
         html = '<div class="nm-note warn"><b class="nm-ico">!</b><span>' + esc(L.MAP_HINT) + '</span></div>' +
             '<div class="nm-field"><label for="nm_map">' + esc(L.MAP_LABEL + ' ' + (dev.name || dev.device_id || '')) + '</label>' +
@@ -357,7 +368,7 @@ async function logout() {
 }
 
 async function saveMap() {
-    const dev = ((S.un || {}).devices || [])[0];
+    const dev = unmappedDevice(S.un || {});
     if (!dev || !S.map) return;
     begin('map');
     let res;
