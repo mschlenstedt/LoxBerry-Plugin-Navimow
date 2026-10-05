@@ -45,18 +45,20 @@ def _save_json_atomic(path: Path, data: dict) -> None:
 def _match_devices(official: list, unofficial: list) -> list:
     """Ordnet offizielle device_id und inoffizielle vehicle_sn einander zu.
 
-    Automatisch nur im eindeutigen Fall (genau ein Gerät auf jeder Seite) --
-    bei mehreren Geräten gibt es serverseitig kein gemeinsames Feld, an dem
-    sich das zweifelsfrei zuordnen liesse, also lieber leer zurückgeben und
-    manuelles Eintragen verlangen als falsch zuordnen.
+    Zwei sichere Fälle: genau ein Gerät auf jeder Seite, oder die device_id
+    des Smart-Home-Zugangs ist dieselbe Seriennummer wie die vehicle_sn der
+    App. Alles andere bleibt offen und wird in der WebUI zugeordnet --
+    lieber gar nicht als falsch.
     """
+    def entry(did, v):
+        return {"device_id": did, "vehicle_sn": str(v.get("vehicle_sn", "")),
+                "vehicle_type": int(v.get("vehicle_type", 0) or 0)}
+
     if len(official) == 1 and len(unofficial) == 1:
-        return [{
-            "device_id": official[0]["device_id"],
-            "vehicle_sn": str(unofficial[0].get("vehicle_sn", "")),
-            "vehicle_type": int(unofficial[0].get("vehicle_type", 0) or 0),
-        }]
-    return []
+        return [entry(official[0]["device_id"], unofficial[0])]
+    by_sn = {str(v.get("vehicle_sn", "")).strip().upper(): v for v in unofficial if v.get("vehicle_sn")}
+    return [entry(d["device_id"], by_sn[key]) for d in official
+            if (key := str(d.get("device_id", "")).strip().upper()) in by_sn]
 
 
 def _vehicle_list(unofficial: list) -> list:
@@ -68,14 +70,17 @@ def _vehicle_list(unofficial: list) -> list:
     } for v in unofficial if v.get("vehicle_sn")]
 
 
-def _resolve_mapping(official: list, unofficial: list, existing: list) -> list:
-    """Automatische Zuordnung, sonst eine frühere manuelle, solange ihre Mäher noch im Konto sind."""
-    matched = _match_devices(official, unofficial)
-    if matched:
-        return matched
+def _resolve_mapping(official: list, unofficial: list, existing: list, excluded: list = ()) -> list:
+    """Gespeicherte Zuordnung behalten, solange ihre Mäher noch im Konto sind,
+    und offene Mäher automatisch ergänzen -- außer denen, die der Nutzer
+    ausdrücklich ohne App-Zugang betreiben will (excluded)."""
     known = {str(v.get("vehicle_sn", "")) for v in unofficial}
     kept = [m for m in existing if isinstance(m, dict) and m.get("vehicle_sn") in known]
-    return kept
+    done_dev = {m.get("device_id") for m in kept} | set(excluded)
+    done_sn = {m.get("vehicle_sn") for m in kept}
+    added = [m for m in _match_devices(official, unofficial)
+             if m["device_id"] not in done_dev and m["vehicle_sn"] not in done_sn]
+    return kept + added
 
 
 async def _do_login(configdir: Path, email: str, password: str) -> dict:
@@ -103,7 +108,8 @@ async def _do_login(configdir: Path, email: str, password: str) -> dict:
         unofficial_devices = await client.auth_list()
 
     official_devices = cfg.get("devices", [])
-    mapping = _resolve_mapping(official_devices, unofficial_devices, cfg.get("unofficial_devices", []))
+    mapping = _resolve_mapping(official_devices, unofficial_devices, cfg.get("unofficial_devices", []),
+                               cfg.get("unofficial_excluded", []))
 
     cfg["unofficial_region"] = tokens.region or ""
     cfg["unofficial_uuid"] = tokens.uuid

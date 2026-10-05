@@ -117,6 +117,18 @@ const postJSON = (params) => fetch('ajax.cgi', { method: 'POST', body: new URLSe
 /* ---------- Statusableitungen ---------- */
 function gwRunning() { return !!S.gw.pid && !S.gw.phase; }
 
+// Mäher, die weder zugeordnet noch bewusst ohne App-Zugang sind. Gleiche
+// Seriennummern ordnet der Gateway selbst zu; was übrig bleibt, fragt die Seite ab.
+function openDevices(u) {
+    const done = new Set((u.mapping || []).map((m) => m.device_id).concat(u.excluded || []));
+    return (u.devices || []).filter((d) => !done.has(d.device_id));
+}
+
+function freeVehicles(u) {
+    const taken = new Set((u.mapping || []).map((m) => m.vehicle_sn));
+    return (u.vehicles || []).filter((v) => !taken.has(v.vehicle_sn));
+}
+
 // Startwert der Zuordnung: die gespeicherte, sonst ein Vorschlag je Mäher --
 // App-Mäher mit gleicher Seriennummer oder gleichem Namen, aber nur eindeutige Treffer.
 function mapDraft(u) {
@@ -147,8 +159,7 @@ function unofficialView() {
     if (!gwRunning()) return 'gwdown';
     if (u.ok) {
         if (S.mapEdit) return 'map';
-        const unmapped = (u.devices || []).length > 0 && (u.vehicles || []).length > 0 && !(u.mapping || []).length;
-        return unmapped ? 'map' : 'connected';
+        return openDevices(u).length > 0 && freeVehicles(u).length > 0 ? 'map' : 'connected';
     }
     if (u.error || S.err) return 'error';
     return 'starting';
@@ -218,7 +229,7 @@ function btn(act, label, cls, opts) {
 function unofficialSignature(view) {
     const u = S.un || {};
     return [view, S.busy, S.steps.join(), S.err, S.notice, S.fieldErr, S.confirmLogout, S.flow, JSON.stringify(S.mapSel), S.mapEdit,
-            u.error, u.since, JSON.stringify(u.mapping || []), JSON.stringify(u.vehicles || []), JSON.stringify(u.devices || []),
+            u.error, u.since, JSON.stringify(u.mapping || []), JSON.stringify(u.vehicles || []), JSON.stringify(u.devices || []), JSON.stringify(u.excluded || []),
             (S.un ? S.un.base_topic : '')].join('|');
 }
 let lastSig = '';

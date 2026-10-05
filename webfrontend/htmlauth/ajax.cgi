@@ -282,6 +282,7 @@ sub action_unofficiallogout {
                            unofficial_uid unofficial_region unofficial_host);
     $cfg->{unofficial_devices}  = [];
     $cfg->{unofficial_vehicles} = [];
+    $cfg->{unofficial_excluded} = [];
     unless (write_cfg($cfg)) {
         print encode_json({ ok => 0, error => 'pluginconfig.json nicht schreibbar' });
         return;
@@ -293,7 +294,8 @@ sub action_unofficiallogout {
 
 sub action_unofficialmap {
     # Komplette Zuordnung in einem Rutsch: [{device_id, vehicle_sn}, ...].
-    # Leere vehicle_sn = Mäher ohne App-Zugang. Ersetzt die bisherige Liste.
+    # Leere vehicle_sn = Mäher bewusst ohne App-Zugang; landet in
+    # unofficial_excluded, damit der Gateway ihn nicht automatisch zuordnet.
     my $req = eval { decode_json($cgi->param('mapping') // '') };
     unless (ref $req eq 'ARRAY') {
         print encode_json({ ok => 0, error => 'Ungültige Zuordnung' });
@@ -306,12 +308,15 @@ sub action_unofficialmap {
     }
     my %vehicle = map { (($_->{vehicle_sn} // '') => $_) } @{ $cfg->{unofficial_vehicles} // [] };
     my %device  = map { (($_->{device_id}  // '') => 1)  } @{ $cfg->{devices} // [] };
-    my (@mapping, %seen_dev, %seen_sn);
+    my (@mapping, @excluded, %seen_dev, %seen_sn);
     for my $m (@$req) {
         next unless ref $m eq 'HASH';
         my $device_id  = $m->{device_id}  // '';
         my $vehicle_sn = $m->{vehicle_sn} // '';
-        next if $vehicle_sn eq '';
+        if ($vehicle_sn eq '') {
+            push @excluded, $device_id if $device{$device_id};
+            next;
+        }
         if (!$device{$device_id} || !$vehicle{$vehicle_sn}) {
             print encode_json({ ok => 0, error => 'Unbekannter Mäher' });
             return;
@@ -323,7 +328,8 @@ sub action_unofficialmap {
         push @mapping, { device_id => $device_id, vehicle_sn => $vehicle_sn,
                          vehicle_type => ($vehicle{$vehicle_sn}->{vehicle_type} // 0) + 0 };
     }
-    $cfg->{unofficial_devices} = \@mapping;
+    $cfg->{unofficial_devices}  = \@mapping;
+    $cfg->{unofficial_excluded} = \@excluded;
     unless (write_cfg($cfg)) {
         print encode_json({ ok => 0, error => 'pluginconfig.json nicht schreibbar' });
         return;
@@ -339,6 +345,7 @@ sub action_getunofficialstatus {
     my @mapping  = ref $cfg->{unofficial_devices}  eq 'ARRAY' ? @{ $cfg->{unofficial_devices} }  : ();
     my @vehicles = ref $cfg->{unofficial_vehicles} eq 'ARRAY' ? @{ $cfg->{unofficial_vehicles} } : ();
     my @devices  = ref $cfg->{devices}             eq 'ARRAY' ? @{ $cfg->{devices} }             : ();
+    my @excluded = ref $cfg->{unofficial_excluded} eq 'ARRAY' ? @{ $cfg->{unofficial_excluded} } : ();
 
     my $raw  = LoxBerry::IO::mqtt_get("$base_topic/gateway_app");
     my $data = (defined $raw && $raw ne '') ? (eval { decode_json($raw) } // {}) : {};
@@ -363,6 +370,7 @@ sub action_getunofficialstatus {
                                 zones_text => $zones_text{ $_->{device_id} // '' } // '' } } @mapping ],
         vehicles   => [ map { { vehicle_sn => $_->{vehicle_sn}, name => $_->{name} // '' } } @vehicles ],
         devices    => [ map { { device_id => $_->{device_id}, name => $_->{name} // '' } } @devices ],
+        excluded   => \@excluded,
     });
 }
 

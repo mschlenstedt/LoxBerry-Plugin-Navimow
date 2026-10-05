@@ -24,6 +24,7 @@ import aiomqtt
 import navimow_unofficial_plan
 import navimow_unofficial_settings
 import navimow_unofficial_fault
+import navimow_unofficial_login
 
 # ── CLI args ──────────────────────────────────────────────────────────────────
 _ap = argparse.ArgumentParser(add_help=False)
@@ -1556,6 +1557,24 @@ async def task_loglevel_watch(shutdown: asyncio.Event) -> None:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+def _auto_map_unofficial(plugin_cfg: dict) -> None:
+    """Offene Mäher beim Start dem App-Zugang zuordnen, wenn die Seriennummer übereinstimmt.
+
+    Für Installationen, die schon vor dem Abgleich angemeldet waren -- sonst
+    greift er erst beim nächsten Login. Geschrieben wird nur bei einer Änderung.
+    """
+    if not plugin_cfg.get("unofficial_enabled"):
+        return
+    current = plugin_cfg.get("unofficial_devices", [])
+    mapping = navimow_unofficial_login._resolve_mapping(
+        plugin_cfg.get("devices", []), plugin_cfg.get("unofficial_vehicles", []),
+        current, plugin_cfg.get("unofficial_excluded", []))
+    if mapping != current:
+        plugin_cfg["unofficial_devices"] = mapping
+        save_plugin_config(plugin_cfg)
+        LOGOK(f"App API mower mapping updated by serial number: {len(mapping)} mapped")
+
+
 def _init_loop_objects() -> None:
     """Event und Queues in der laufenden Schleife neu anlegen.
 
@@ -1634,6 +1653,7 @@ async def main() -> None:
         _update_unofficial_auth_status(plugin_cfg, base_topic)
 
         mqtt_info = await rest_init(plugin_cfg, session)
+        _auto_map_unofficial(plugin_cfg)
 
         # Publish static mower info (model, firmware) — retain=True, persists across restarts
         if plugin_cfg.get("access_token") and plugin_cfg.get("devices"):
