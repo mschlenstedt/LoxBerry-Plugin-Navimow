@@ -70,6 +70,7 @@ case "$ACTION" in
         --logfile    "$LOGFILE" \
         --logdbkey   "$LOGDBKEY" \
         --configdir  "$LBPCONFIGDIR" \
+        --lbsconfig  "$LBSCONFIG" \
         --loglevel   "$LOGLEVEL" \
         &
 

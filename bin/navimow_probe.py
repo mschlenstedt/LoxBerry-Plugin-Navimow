@@ -28,11 +28,13 @@ from urllib.parse import urlparse
 
 import paho.mqtt.client as mqtt
 import requests
-from loxberry import system as lbsystem
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DEFAULT_CONFIG_DIR = lbsystem.lbpconfigdir   # aus der LoxBerry-Bibliothek
+# <LBHOMEDIR>/bin/plugins/<Pluginordner>/navimow_probe.py -> <LBHOMEDIR>/config/plugins/<Pluginordner>
+_SCRIPT            = os.path.realpath(__file__)
+DEFAULT_CONFIG_DIR = os.path.join(os.environ.get("LBHOMEDIR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_SCRIPT)))),
+                                  "config", "plugins", os.path.basename(os.path.dirname(_SCRIPT)))
 CONFIG_FILE        = "pluginconfig.json"
 API_BASE           = "https://navimow-fra.ninebot.com"
 TOKEN_URL          = f"{API_BASE}/openapi/oauth/getAccessToken"

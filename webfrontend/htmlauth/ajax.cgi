@@ -106,6 +106,7 @@ sub do_restart {
     my $plugin_folder = $lbpplugindir;
     $plugin_folder =~ s{.*/plugins/}{};
     my $gateway = "$lbhomedir/bin/plugins/$plugin_folder/navimow_gateway.py";
+    my $lbsconf = "$lbhomedir/config/system";
 
     # Register log entry in LoxBerry log database so loglist_html() finds it
     my ($logfile, $logdbkey, $loglevel);
@@ -148,6 +149,7 @@ sub do_restart {
                 '--logfile',   $logfile,
                 '--logdbkey',  $logdbkey,
                 '--configdir', $lbpconfigdir,
+                '--lbsconfig', $lbsconf,
                 '--loglevel',  $loglevel,
             ) or exit 1;
         }
