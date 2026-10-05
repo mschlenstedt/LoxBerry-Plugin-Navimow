@@ -77,8 +77,9 @@ const L = {
     LBL_ZONES:       '<TMPL_VAR "UNOFFICIAL.LABEL_ZONES" ESCAPE=JS>',
     ZONES_NONE:      '<TMPL_VAR "UNOFFICIAL.ZONES_NONE" ESCAPE=JS>',
     MAP_HINT:        '<TMPL_VAR "UNOFFICIAL.MAP_HINT" ESCAPE=JS>',
-    MAP_LABEL:       '<TMPL_VAR "UNOFFICIAL.MAP_LABEL" ESCAPE=JS>',
-    MAP_CHOOSE:      '<TMPL_VAR "UNOFFICIAL.MAP_CHOOSE" ESCAPE=JS>',
+    MAP_NONE:        '<TMPL_VAR "UNOFFICIAL.MAP_NONE" ESCAPE=JS>',
+    MAP_TAKEN:       '<TMPL_VAR "UNOFFICIAL.MAP_TAKEN" ESCAPE=JS>',
+    BTN_EDIT_MAP:    '<TMPL_VAR "UNOFFICIAL.BTN_EDIT_MAP" ESCAPE=JS>',
     ERR_EMAIL:       '<TMPL_VAR "UNOFFICIAL.ERR_REQUIRED_EMAIL" ESCAPE=JS>',
     ERR_PW:          '<TMPL_VAR "UNOFFICIAL.ERR_REQUIRED_PW" ESCAPE=JS>',
     ERR_BADPW:       '<TMPL_VAR "UNOFFICIAL.ERR_BADPW" ESCAPE=JS>',
@@ -102,7 +103,9 @@ const S = {
     flow: '',                                 // '' | 'login' | 'logout' | 'map'
     steps: ['pending', 'pending', 'pending'],
     err: '', notice: '', fieldErr: '',
-    email: '', pw: '', map: '', confirmLogout: false,
+    email: '', pw: '', confirmLogout: false,
+    mapSel: null,                             // Entwurf der Zuordnung: device_id -> vehicle_sn ('' = ohne App-Zugang)
+    mapEdit: false,                           // Zuordnung über "Zuordnung ändern" geöffnet
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -114,16 +117,26 @@ const postJSON = (params) => fetch('ajax.cgi', { method: 'POST', body: new URLSe
 /* ---------- Statusableitungen ---------- */
 function gwRunning() { return !!S.gw.pid && !S.gw.phase; }
 
-// Zuordnung Mäher für Mäher: erst der nächste noch offene, angeboten nur App-Mäher,
-// die noch keinem anderen Gerät gehören.
-function unmappedDevice(u) {
-    const done = new Set((u.mapping || []).map((m) => m.device_id));
-    return (u.devices || []).find((d) => !done.has(d.device_id));
-}
-
-function freeVehicles(u) {
-    const taken = new Set((u.mapping || []).map((m) => m.vehicle_sn));
-    return (u.vehicles || []).filter((v) => !taken.has(v.vehicle_sn));
+// Startwert der Zuordnung: die gespeicherte, sonst ein Vorschlag je Mäher --
+// App-Mäher mit gleicher Seriennummer oder gleichem Namen, aber nur eindeutige Treffer.
+function mapDraft(u) {
+    const devices = u.devices || [], vehicles = u.vehicles || [], mapping = u.mapping || [];
+    const draft = {};
+    if (mapping.length) {
+        devices.forEach((d) => { draft[d.device_id] = ''; });
+        mapping.forEach((m) => { draft[m.device_id] = m.vehicle_sn; });
+        return draft;
+    }
+    const norm = (x) => String(x || '').trim().toLowerCase();
+    devices.forEach((d) => {
+        const hit = devices.length === 1 && vehicles.length === 1 ? vehicles
+            : vehicles.filter((v) => v.vehicle_sn === d.device_id || (norm(v.name) && norm(v.name) === norm(d.name)));
+        draft[d.device_id] = hit.length === 1 ? hit[0].vehicle_sn : '';
+    });
+    const count = {};
+    Object.values(draft).forEach((sn) => { if (sn) count[sn] = (count[sn] || 0) + 1; });
+    Object.keys(draft).forEach((k) => { if (count[draft[k]] > 1) draft[k] = ''; });
+    return draft;
 }
 
 function unofficialView() {
@@ -133,7 +146,9 @@ function unofficialView() {
     if (!u.enabled) return S.err ? 'error' : 'none';
     if (!gwRunning()) return 'gwdown';
     if (u.ok) {
-        return (unmappedDevice(u) && freeVehicles(u).length > 0 && (u.vehicles || []).length > 1) ? 'map' : 'connected';
+        if (S.mapEdit) return 'map';
+        const unmapped = (u.devices || []).length > 0 && (u.vehicles || []).length > 0 && !(u.mapping || []).length;
+        return unmapped ? 'map' : 'connected';
     }
     if (u.error || S.err) return 'error';
     return 'starting';
@@ -202,8 +217,9 @@ function btn(act, label, cls, opts) {
 
 function unofficialSignature(view) {
     const u = S.un || {};
-    return [view, S.busy, S.steps.join(), S.err, S.notice, S.fieldErr, S.confirmLogout, S.flow, S.map,
-            u.error, u.since, JSON.stringify(u.mapping || []), JSON.stringify(u.vehicles || []), u.zones_text, (S.un ? S.un.base_topic : '')].join('|');
+    return [view, S.busy, S.steps.join(), S.err, S.notice, S.fieldErr, S.confirmLogout, S.flow, JSON.stringify(S.mapSel), S.mapEdit,
+            u.error, u.since, JSON.stringify(u.mapping || []), JSON.stringify(u.vehicles || []), JSON.stringify(u.devices || []),
+            (S.un ? S.un.base_topic : '')].join('|');
 }
 let lastSig = '';
 
@@ -235,19 +251,34 @@ function renderUnofficial() {
     if (view === 'connected') {
         html = notice + '<p class="nm-hint">' + esc(L.HINT) + ' ' + esc(L.WARN_APP) + '</p>' +
             '<dl class="nm-kv"><dt>' + esc(L.LBL_SINCE) + '</dt><dd>' + esc(fmtSince(u.since)) + '</dd>' +
-            '<dt>' + esc(L.LBL_ZONES) + '</dt><dd>' + esc(u.zones_text || L.ZONES_NONE) + '</dd></dl>';
+            (u.devices || []).map((d) => {
+                const m = (u.mapping || []).find((x) => x.device_id === d.device_id);
+                return '<dt>' + esc(d.name || d.device_id) + '</dt><dd>' +
+                    esc(m ? L.LBL_ZONES + ': ' + (m.zones_text || L.ZONES_NONE) : L.MAP_NONE) + '</dd>';
+            }).join('') + '</dl>';
+        const canEdit = (u.vehicles || []).length > 0 && ((u.devices || []).length > 1 || (u.vehicles || []).length > 1);
         actions = S.confirmLogout
             ? '<span class="nm-desc">' + esc(L.CONFIRM_LOGOUT) + '</span>' + btn('logout-cancel', L.BTN_CANCEL) + btn('logout-confirm', L.BTN_LOGOUT_OK, 'lb-btn-danger')
-            : btn('logout', L.BTN_LOGOUT, 'lb-btn-danger', { disabled: S.busy });
+            : (canEdit ? btn('map-edit', L.BTN_EDIT_MAP, '', { disabled: S.busy }) : '') + btn('logout', L.BTN_LOGOUT, 'lb-btn-danger', { disabled: S.busy });
     } else if (view === 'map') {
-        const dev = unmappedDevice(u) || {};
-        const opts = freeVehicles(u).map((v) => '<option value="' + esc(v.vehicle_sn) + '"' + (S.map === v.vehicle_sn ? ' selected' : '') + '>' +
-            esc((v.name ? v.name + ' · ' : '') + v.vehicle_sn) + '</option>').join('');
-        html = '<div class="nm-note warn"><b class="nm-ico">!</b><span>' + esc(L.MAP_HINT) + '</span></div>' +
-            '<div class="nm-field"><label for="nm_map">' + esc(L.MAP_LABEL + ' ' + (dev.name || dev.device_id || '')) + '</label>' +
-            '<select class="lb-select" id="nm_map" data-bind="map"' + (S.busy ? ' disabled' : '') + '><option value="">' + esc(L.MAP_CHOOSE) + '</option>' + opts + '</select></div>';
+        const sel = S.mapSel || (S.mapSel = mapDraft(u));
+        const vehicles = u.vehicles || [];
+        const taken = (sn, did) => Object.keys(sel).some((k) => k !== did && sel[k] === sn);
+        const rows = (u.devices || []).map((d, i) => {
+            const opts = '<option value="">' + esc(L.MAP_NONE) + '</option>' + vehicles.map((v) => {
+                const t = taken(v.vehicle_sn, d.device_id);
+                return '<option value="' + esc(v.vehicle_sn) + '"' + (sel[d.device_id] === v.vehicle_sn ? ' selected' : '') + (t ? ' disabled' : '') + '>' +
+                    esc((v.name ? v.name + ' · ' : '') + v.vehicle_sn + (t ? ' – ' + L.MAP_TAKEN : '')) + '</option>';
+            }).join('');
+            return '<div class="nm-field"><label for="nm_map_' + i + '">' + esc(d.name || d.device_id) + '</label>' +
+                '<select class="lb-select" id="nm_map_' + i + '" data-bind="map" data-dev="' + esc(d.device_id) + '"' + (S.busy ? ' disabled' : '') + '>' +
+                opts + '</select></div>';
+        }).join('');
+        html = '<div class="nm-note warn"><b class="nm-ico">!</b><span>' + esc(L.MAP_HINT) + '</span></div><div class="nm-form">' + rows + '</div>';
         if (S.err) html = '<div class="nm-note err" role="alert"><b class="nm-ico">!</b><span>' + esc(S.err) + '</span></div>' + html;
-        actions = btn('save-map', S.flow === 'map' ? L.BTN_SAVING : L.BTN_SAVE_MAP, 'lb-btn-primary', { disabled: S.busy || !S.map, spin: S.flow === 'map' });
+        actions = (S.mapEdit ? btn('map-cancel', L.BTN_CANCEL, '', { disabled: S.busy }) : '') +
+            btn('save-map', S.flow === 'map' ? L.BTN_SAVING : L.BTN_SAVE_MAP, 'lb-btn-primary',
+                { disabled: S.busy || !Object.values(sel).some(Boolean), spin: S.flow === 'map' });
     } else if (view === 'starting' || view === 'busy') {
         html = '<p class="nm-hint">' + esc(L.SH_STARTING) + '…</p>';
     } else if (view === 'gwdown') {
@@ -368,13 +399,15 @@ async function logout() {
 }
 
 async function saveMap() {
-    const dev = unmappedDevice(S.un || {});
-    if (!dev || !S.map) return;
+    const sel = S.mapSel || {};
+    const mapping = Object.keys(sel).filter((k) => sel[k]).map((k) => ({ device_id: k, vehicle_sn: sel[k] }));
+    if (!mapping.length) return;
     begin('map');
     let res;
-    try { res = await postJSON({ action: 'unofficialmap', device_id: dev.device_id, vehicle_sn: S.map }); }
+    try { res = await postJSON({ action: 'unofficialmap', mapping: JSON.stringify(mapping) }); }
     catch (e) { S.err = L.ERR_REQUEST; return finish(S.err); }
     if (!res.ok) { S.err = res.error || L.ERR_REQUEST; return finish(S.err); }
+    S.mapEdit = false; S.mapSel = null;
     const ok = await waitForGateway(res.ts, (u) => u.ok || !!u.error);
     if (!ok) { S.err = L.ERR_TIMEOUT; return finish(S.err); }
     S.notice = L.DONE_MAP;
@@ -410,17 +443,20 @@ root.addEventListener('click', (e) => {
         case 'logout-cancel': S.confirmLogout = false; render(); break;
         case 'logout-confirm': logout(); break;
         case 'save-map': saveMap(); break;
+        case 'map-edit': S.mapEdit = true; S.mapSel = null; S.notice = ''; S.err = ''; render(); break;
+        case 'map-cancel': S.mapEdit = false; S.mapSel = null; S.err = ''; render(); break;
     }
 });
 root.addEventListener('input', (e) => {
     const k = e.target.dataset && e.target.dataset.bind;
     if (!k) return;
+    if (k === 'map') { (S.mapSel = S.mapSel || {})[e.target.dataset.dev] = e.target.value; render(); return; }
     S[k] = e.target.value;
     if (S.fieldErr) { S.fieldErr = ''; e.target.removeAttribute('aria-invalid'); }
-    if (k === 'map') render();
 });
 root.addEventListener('change', (e) => {
-    if (e.target.dataset && e.target.dataset.bind === 'map') { S.map = e.target.value; render(); }
+    const k = e.target.dataset && e.target.dataset.bind;
+    if (k === 'map') { (S.mapSel = S.mapSel || {})[e.target.dataset.dev] = e.target.value; render(); }
 });
 root.addEventListener('keydown', (e) => {
     const k = e.target.dataset && e.target.dataset.bind;

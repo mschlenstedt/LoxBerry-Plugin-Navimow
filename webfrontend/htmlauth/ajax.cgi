@@ -292,22 +292,37 @@ sub action_unofficiallogout {
 }
 
 sub action_unofficialmap {
-    my $device_id  = decode('UTF-8', $cgi->param('device_id')  // '');
-    my $vehicle_sn = decode('UTF-8', $cgi->param('vehicle_sn') // '');
+    # Komplette Zuordnung in einem Rutsch: [{device_id, vehicle_sn}, ...].
+    # Leere vehicle_sn = Mäher ohne App-Zugang. Ersetzt die bisherige Liste.
+    my $req = eval { decode_json($cgi->param('mapping') // '') };
+    unless (ref $req eq 'ARRAY') {
+        print encode_json({ ok => 0, error => 'Ungültige Zuordnung' });
+        return;
+    }
     my $cfg = read_cfg();
     unless ($cfg) {
         print encode_json({ ok => 0, error => 'pluginconfig.json nicht lesbar' });
         return;
     }
-    my ($vehicle) = grep { ($_->{vehicle_sn} // '') eq $vehicle_sn } @{ $cfg->{unofficial_vehicles} // [] };
-    my ($device)  = grep { ($_->{device_id}  // '') eq $device_id  } @{ $cfg->{devices} // [] };
-    unless ($vehicle && $device) {
-        print encode_json({ ok => 0, error => 'Unbekannter Mäher' });
-        return;
+    my %vehicle = map { (($_->{vehicle_sn} // '') => $_) } @{ $cfg->{unofficial_vehicles} // [] };
+    my %device  = map { (($_->{device_id}  // '') => 1)  } @{ $cfg->{devices} // [] };
+    my (@mapping, %seen_dev, %seen_sn);
+    for my $m (@$req) {
+        next unless ref $m eq 'HASH';
+        my $device_id  = $m->{device_id}  // '';
+        my $vehicle_sn = $m->{vehicle_sn} // '';
+        next if $vehicle_sn eq '';
+        if (!$device{$device_id} || !$vehicle{$vehicle_sn}) {
+            print encode_json({ ok => 0, error => 'Unbekannter Mäher' });
+            return;
+        }
+        if ($seen_dev{$device_id}++ || $seen_sn{$vehicle_sn}++) {
+            print encode_json({ ok => 0, error => 'Ein Mäher ist doppelt zugeordnet' });
+            return;
+        }
+        push @mapping, { device_id => $device_id, vehicle_sn => $vehicle_sn,
+                         vehicle_type => ($vehicle{$vehicle_sn}->{vehicle_type} // 0) + 0 };
     }
-    my @mapping = grep { ($_->{device_id} // '') ne $device_id } @{ $cfg->{unofficial_devices} // [] };
-    push @mapping, { device_id => $device_id, vehicle_sn => $vehicle_sn,
-                     vehicle_type => ($vehicle->{vehicle_type} // 0) + 0 };
     $cfg->{unofficial_devices} = \@mapping;
     unless (write_cfg($cfg)) {
         print encode_json({ ok => 0, error => 'pluginconfig.json nicht schreibbar' });
@@ -328,11 +343,12 @@ sub action_getunofficialstatus {
     my $raw  = LoxBerry::IO::mqtt_get("$base_topic/gateway_app");
     my $data = (defined $raw && $raw ne '') ? (eval { decode_json($raw) } // {}) : {};
 
-    my $zones_text = '';
-    if (@mapping && $mapping[0]->{device_id}) {
-        my $zraw = LoxBerry::IO::mqtt_get("$base_topic/$mapping[0]->{device_id}/zones");
+    my %zones_text;
+    for my $m (@mapping) {
+        my $did = $m->{device_id} or next;
+        my $zraw = LoxBerry::IO::mqtt_get("$base_topic/$did/zones");
         my $zdata = (defined $zraw && $zraw ne '') ? (eval { decode_json($zraw) } // {}) : {};
-        $zones_text = $zdata->{text} // '';
+        $zones_text{$did} = $zdata->{text} // '';
     }
 
     print encode_json({
@@ -343,10 +359,10 @@ sub action_getunofficialstatus {
         since      => ($data->{since} // 0) + 0,
         ts         => ($data->{ts} // 0) + 0,
         base_topic => $base_topic,
-        mapping    => [ map { { device_id => $_->{device_id}, vehicle_sn => $_->{vehicle_sn} } } @mapping ],
+        mapping    => [ map { { device_id => $_->{device_id}, vehicle_sn => $_->{vehicle_sn},
+                                zones_text => $zones_text{ $_->{device_id} // '' } // '' } } @mapping ],
         vehicles   => [ map { { vehicle_sn => $_->{vehicle_sn}, name => $_->{name} // '' } } @vehicles ],
         devices    => [ map { { device_id => $_->{device_id}, name => $_->{name} // '' } } @devices ],
-        zones_text => $zones_text,
     });
 }
 
